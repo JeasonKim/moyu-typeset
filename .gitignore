@@ -1,0 +1,11 @@
+node_modules/
+dist/
+content/
+src/data/generated-article.ts
+.DS_Store
+.env
+.env.local
+.dev.vars
+.wrangler/
+npm-debug.log*
+design-qa.md
