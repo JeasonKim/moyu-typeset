@@ -13,6 +13,10 @@
   <strong>31 套主题</strong>　·　<strong>5 类内容场景</strong>　·　<strong>3 种导入方式</strong>　·　<strong>无需注册</strong>　·　<strong>内容不上传</strong>
 </p>
 
+<p align="center">
+  <a href="https://moyu.liaobuqi.ren"><strong>在线体验 →</strong></a>
+</p>
+
 ![墨鱼排版工作台](./docs/images/workbench.png)
 
 ## 写好内容，剩下的交给墨鱼
@@ -72,7 +76,9 @@
 
 ## 立即体验
 
-项目内置了一篇说明型示例文档，启动后无需准备内容，就能先浏览全部能力。
+直接访问 [moyu.liaobuqi.ren](https://moyu.liaobuqi.ren)，无需安装或注册。项目内置了一篇说明型示例文档，打开后无需准备内容，就能先浏览全部能力。
+
+如果希望在本地运行：
 
 ```bash
 npm run setup
