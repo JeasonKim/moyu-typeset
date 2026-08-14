@@ -3,6 +3,10 @@ import '@tabler/icons-webfont/dist/tabler-icons.min.css';
 import themesDataset from './data/themes.json';
 import { generatedArticleMarkdown, generatedArticleStats } from './data/generated-article';
 import {
+  embedArticleDiagramsAsImages,
+  type ArticleDiagramEmbeddingResult,
+} from './domain/article-diagrams';
+import {
   articleDisplayFileName,
   markdownDocumentFromFile,
   markdownDocumentFromPaste,
@@ -42,6 +46,7 @@ import type {
   TextStyleTarget,
   ThemeStyleOverrides,
 } from './domain/style-editor-types';
+import { browserArticleDiagramRenderer } from './infrastructure/browser-article-diagram-renderer';
 
 type PreviewDevice = 'desktop' | 'mobile';
 type ThemeRevealPhase = 'idle' | 'brand-loading' | 'curtain-opening';
@@ -452,12 +457,7 @@ function bindArticleSourceEvents(): void {
       return;
     }
 
-    const operation = typesettingFeedback.begin();
-    state.article = markdownDocumentFromPaste(markdown);
-    state.pasteDialogOpen = false;
-    renderApp();
-    showToast('已载入 Markdown');
-    operation.finish();
+    void previewPastedMarkdown(markdown);
   });
 
   const dropZone = app.querySelector<HTMLElement>('[data-article-drop-zone]');
@@ -526,17 +526,91 @@ async function previewMarkdownFile(file: File): Promise<void> {
       return;
     }
 
-    state.article = markdownDocumentFromFile({ fileName: file.name, markdown });
+    const diagramResult = await embedArticleDiagramsAsImages({
+      markdown,
+      renderer: browserArticleDiagramRenderer,
+    });
+    if (!operation.isCurrent()) {
+      console.warn(
+        `[theme-preview] diagram preview discarded name="${file.name}" reason="a newer article source was selected".`,
+      );
+      return;
+    }
+
+    state.article = markdownDocumentFromFile({ fileName: file.name, markdown: diagramResult.markdown });
     renderApp();
-    showToast(`已打开 ${file.name}`);
+    showToast(articleImportFeedback(`已打开 ${file.name}`, diagramResult));
   } catch (error) {
-    console.warn(`[theme-preview] markdown file read failed name="${file.name}" reason="${String(error)}".`);
+    console.warn(`[theme-preview] markdown file preparation failed name="${file.name}" reason="${String(error)}".`);
     if (operation.isCurrent()) {
       showToast('文件读取失败，请重新选择');
     }
   } finally {
     operation.finish();
   }
+}
+
+async function previewPastedMarkdown(markdown: string): Promise<void> {
+  const operation = typesettingFeedback.begin();
+  state.pasteDialogOpen = false;
+  renderApp();
+
+  try {
+    const diagramResult = await embedArticleDiagramsAsImages({
+      markdown,
+      renderer: browserArticleDiagramRenderer,
+    });
+    if (!operation.isCurrent()) {
+      console.warn('[theme-preview] pasted markdown preview discarded reason="a newer article source was selected".');
+      return;
+    }
+
+    state.article = markdownDocumentFromPaste(diagramResult.markdown);
+    renderApp();
+    showToast(articleImportFeedback('已载入 Markdown', diagramResult));
+  } catch (error) {
+    console.warn(`[theme-preview] pasted markdown preparation failed reason="${String(error)}".`);
+    if (operation.isCurrent()) {
+      showToast('Markdown 处理失败，请重试');
+    }
+  } finally {
+    operation.finish();
+  }
+}
+
+async function typesetBundledDemoDiagrams(): Promise<void> {
+  const sourceMarkdown = state.article.markdown;
+  const operation = typesettingFeedback.begin();
+
+  try {
+    const diagramResult = await embedArticleDiagramsAsImages({
+      markdown: sourceMarkdown,
+      renderer: browserArticleDiagramRenderer,
+    });
+    if (!operation.isCurrent() || state.article.source !== 'demo' || state.article.markdown !== sourceMarkdown) {
+      console.warn('[theme-preview] bundled demo diagram result discarded reason="article source changed".');
+      return;
+    }
+
+    state.article = { ...state.article, markdown: diagramResult.markdown };
+    renderApp();
+  } catch (error) {
+    console.warn(`[theme-preview] bundled demo diagram preparation failed reason="${String(error)}".`);
+  } finally {
+    operation.finish();
+  }
+}
+
+function articleImportFeedback(prefix: string, result: ArticleDiagramEmbeddingResult): string {
+  if (result.failedDiagramCount > 0) {
+    return `${prefix}；${result.failedDiagramCount} 个图表渲染失败，已保留代码`;
+  }
+
+  if (result.embeddedDiagramCount > 0) {
+    return `${prefix}，${result.embeddedDiagramCount} 个图表已转成图片`;
+  }
+
+  return prefix;
 }
 
 function revealTypesettingFeedback(): void {
@@ -1487,3 +1561,4 @@ function escapeAttribute(value: string): string {
 }
 
 renderApp();
+void typesetBundledDemoDiagrams();

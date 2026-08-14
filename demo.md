@@ -98,6 +98,18 @@ const article = {
 console.log('所见即所得', article);
 ```
 
+### Mermaid 与 Graphviz 图表
+
+文章中的 `mermaid`、`dot` 或 `graphviz` 代码块会在浏览器本地渲染成高清 PNG，并以内嵌 Base64 图片呈现。复制到公众号时带走的是图片，不需要公众号理解图表语法，也不会把图表内容提交给服务器。
+
+```mermaid
+flowchart TD
+  A[打开 Markdown] --> B[识别图表]
+  B --> C[浏览器本地渲染]
+  C --> D[转换为 Base64 图片]
+  D --> E[复制到公众号]
+```
+
 ### 图片与图片占位
 
 Markdown 中的网络图片和 Base64 图片可以直接显示。本地相对路径无法被静态网页自动读取，因此会呈现为清晰的图片占位，并保留图片说明和原路径，方便理解文章结构。
