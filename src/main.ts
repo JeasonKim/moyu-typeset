@@ -52,6 +52,7 @@ type PreviewDevice = 'desktop' | 'mobile';
 type ThemeRevealPhase = 'idle' | 'brand-loading' | 'curtain-opening';
 
 const creatorSiteUrl = 'https://liaobuqi.ren';
+const wechatEditorUrl = 'https://mp.weixin.qq.com/';
 
 const editorTabs: Array<{ id: EditorTab; label: string; icon: string }> = [
   { id: 'text', label: '文本', icon: 'ti-typography' },
@@ -98,6 +99,9 @@ const state = {
   themeQuery: '',
   previewDevice: 'desktop' as PreviewDevice,
   templateListScrollTop: 0,
+  previewScrollTop: 0,
+  previewScrollLeft: 0,
+  previewReadingPositionShouldReset: false,
   pasteDialogOpen: false,
   supportDialogOpen: false,
   typesettingFeedbackVisible: false,
@@ -155,6 +159,7 @@ const themeRevealTransition = coordinateThemeRevealTransition({
 
 function renderApp(): void {
   rememberTemplateListScroll();
+  rememberPreviewReadingPosition();
 
   const selectedTheme = requireSelectedTheme(dataset.themes, state.selectedThemeId);
   normalizeDecorationTarget(selectedTheme);
@@ -171,7 +176,10 @@ function renderApp(): void {
       <header class="commandBar">
         <div class="brandLockup">
           <img class="brandMark" src="/moyu-mark.svg" alt="" aria-hidden="true">
-          <strong>墨鱼排版</strong>
+          <span class="brandText">
+            <strong>墨鱼排版</strong>
+            <small>公众号文章排版</small>
+          </span>
         </div>
         <div class="documentChip" title="当前文章">
           <i class="ti ti-file-text"></i>
@@ -251,6 +259,8 @@ function renderApp(): void {
         </aside>
       </section>
 
+      ${renderMobileThemeDock(selectedTheme)}
+
       ${state.pasteDialogOpen ? renderPasteDialog() : ''}
       ${state.supportDialogOpen ? renderSupportDialog() : ''}
       ${state.toast ? `<div class="toast" role="status">${escapeHtml(state.toast)}</div>` : ''}
@@ -259,6 +269,8 @@ function renderApp(): void {
 
   bindEvents();
   restoreTemplateListScroll();
+  restorePreviewReadingPosition();
+  centerSelectedMobileTheme();
 }
 
 function bindEvents(): void {
@@ -538,6 +550,7 @@ async function previewMarkdownFile(file: File): Promise<void> {
     }
 
     state.article = markdownDocumentFromFile({ fileName: file.name, markdown: diagramResult.markdown });
+    resetPreviewReadingPosition();
     renderApp();
     showToast(articleImportFeedback(`已打开 ${file.name}`, diagramResult));
   } catch (error) {
@@ -566,6 +579,7 @@ async function previewPastedMarkdown(markdown: string): Promise<void> {
     }
 
     state.article = markdownDocumentFromPaste(diagramResult.markdown);
+    resetPreviewReadingPosition();
     renderApp();
     showToast(articleImportFeedback('已载入 Markdown', diagramResult));
   } catch (error) {
@@ -715,6 +729,72 @@ function restoreTemplateListScroll(): void {
   templateList.scrollTop = state.templateListScrollTop;
 }
 
+function rememberPreviewReadingPosition(): void {
+  if (state.previewReadingPositionShouldReset) {
+    return;
+  }
+
+  if (isMobileReadingLayout()) {
+    state.previewScrollTop = window.scrollY;
+    state.previewScrollLeft = window.scrollX;
+    return;
+  }
+
+  const stageCanvas = app.querySelector<HTMLElement>('.stageCanvas');
+  if (!stageCanvas) {
+    return;
+  }
+
+  state.previewScrollTop = stageCanvas.scrollTop;
+  state.previewScrollLeft = stageCanvas.scrollLeft;
+}
+
+function restorePreviewReadingPosition(): void {
+  const scrollTop = state.previewReadingPositionShouldReset ? 0 : state.previewScrollTop;
+  const scrollLeft = state.previewReadingPositionShouldReset ? 0 : state.previewScrollLeft;
+  state.previewReadingPositionShouldReset = false;
+
+  const restore = () => {
+    if (isMobileReadingLayout()) {
+      window.scrollTo({ top: scrollTop, left: scrollLeft, behavior: 'instant' });
+      return;
+    }
+
+    app.querySelector<HTMLElement>('.stageCanvas')?.scrollTo({
+      top: scrollTop,
+      left: scrollLeft,
+      behavior: 'instant',
+    });
+  };
+
+  restore();
+  window.requestAnimationFrame(restore);
+}
+
+function resetPreviewReadingPosition(): void {
+  state.previewScrollTop = 0;
+  state.previewScrollLeft = 0;
+  state.previewReadingPositionShouldReset = true;
+}
+
+function isMobileReadingLayout(): boolean {
+  return window.matchMedia('(max-width: 720px)').matches;
+}
+
+function centerSelectedMobileTheme(): void {
+  if (!isMobileReadingLayout()) {
+    return;
+  }
+
+  const themeRail = app.querySelector<HTMLElement>('.mobileThemeRail');
+  const selectedTheme = themeRail?.querySelector<HTMLElement>('[aria-current="true"]');
+  if (!themeRail || !selectedTheme) {
+    return;
+  }
+
+  themeRail.scrollLeft = selectedTheme.offsetLeft - (themeRail.clientWidth - selectedTheme.clientWidth) / 2;
+}
+
 function renderTemplatePanel(themes: ThemeDefinition[], selectedTheme: ThemeDefinition): string {
   return `
     <div class="panelHeader">
@@ -779,6 +859,43 @@ function renderThemeTemplateCard(theme: ThemeDefinition, selectedTheme: ThemeDef
         <em>${escapeHtml(display.summary)}</em>
       </span>
     </button>
+  `;
+}
+
+function renderMobileThemeDock(selectedTheme: ThemeDefinition): string {
+  const selectedThemeId = selectedTheme.value || selectedTheme.id;
+  const selectedThemeDisplay = themeTemplateDisplay(selectedTheme);
+
+  return `
+    <nav class="mobileThemeDock" aria-label="切换文章主题">
+      <header>
+        <span class="mobileThemeMark"><img src="/moyu-mark.svg" alt="" aria-hidden="true"></span>
+        <span>
+          <small>当前主题</small>
+          <strong>${escapeHtml(selectedThemeDisplay.name)}</strong>
+        </span>
+        <em>左右滑动选择</em>
+      </header>
+      <div class="mobileThemeRail">
+        ${dataset.themes
+          .map((theme) => {
+            const themeId = theme.value || theme.id;
+            const display = themeTemplateDisplay(theme);
+            const isSelected = themeId === selectedThemeId;
+            return `
+              <button
+                type="button"
+                data-theme-id="${escapeAttribute(themeId)}"
+                aria-current="${isSelected ? 'true' : 'false'}"
+              >
+                <i style="background: ${escapeAttribute(theme.primary_color || '#555955')}"></i>
+                <span>${escapeHtml(display.name)}</span>
+              </button>
+            `;
+          })
+          .join('')}
+      </div>
+    </nav>
   `;
 }
 
@@ -1098,6 +1215,14 @@ function requireSelectedTheme(themes: ThemeDefinition[], themeId: string): Theme
 }
 
 async function copyCurrentArticleHtml(): Promise<void> {
+  const wechatEditorWindow = window.open(wechatEditorUrl, '_blank');
+  if (wechatEditorWindow) {
+    wechatEditorWindow.opener = null;
+  } else {
+    console.warn('[theme-preview] WeChat editor window blocked reason="browser denied the new tab".');
+  }
+  const wechatEditorFeedback = wechatEditorWindow ? '，并打开公众号后台' : '；请手动打开公众号后台';
+
   const selectedTheme = requireSelectedTheme(dataset.themes, state.selectedThemeId);
   const editedTheme = applyThemeStyleOverrides(selectedTheme, buildPreviewOverrides(state.editor));
   const html = renderThemeMarkdown({ markdown: state.article.markdown, theme: editedTheme }).html;
@@ -1112,7 +1237,7 @@ async function copyCurrentArticleHtml(): Promise<void> {
       '[theme-preview] rich clipboard write is unavailable. Falling back to plain html copy for WeChat article content.',
     );
     fallbackCopyText(html);
-    showToast('已复制 HTML 源码');
+    showToast(`已复制 HTML${wechatEditorFeedback}`);
     return;
   }
 
@@ -1123,11 +1248,11 @@ async function copyCurrentArticleHtml(): Promise<void> {
         'text/plain': new Blob([plainText], { type: 'text/plain' }),
       }),
     ]);
-    showToast('已复制公众号富文本');
+    showToast(`已复制${wechatEditorFeedback}`);
   } catch (error) {
     console.warn(`[theme-preview] rich clipboard write failed reason="${String(error)}". Falling back to plain html copy.`);
     fallbackCopyText(html);
-    showToast('已复制 HTML 源码');
+    showToast(`已复制 HTML${wechatEditorFeedback}`);
   }
 }
 

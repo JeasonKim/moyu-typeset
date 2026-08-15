@@ -1,4 +1,5 @@
-import { marked, type Token } from 'marked';
+import { marked, type Token, type Tokens } from 'marked';
+import { highlightArticleCode } from '../infrastructure/article-code-highlighter';
 import type { StyleMap, ThemeComponent, ThemeConfig, ThemeDefinition } from './theme-types';
 
 export interface RenderThemeMarkdownInput {
@@ -10,6 +11,8 @@ export interface RenderThemeMarkdownResult {
   html: string;
   usedFallbackConfig: boolean;
 }
+
+type TableCellTag = 'th' | 'td';
 
 export function renderThemeMarkdown(input: RenderThemeMarkdownInput): RenderThemeMarkdownResult {
   const { markdown, theme } = input;
@@ -25,7 +28,7 @@ export function renderThemeMarkdown(input: RenderThemeMarkdownInput): RenderThem
     };
   }
 
-  const tokens = marked.lexer(markdown);
+  const tokens = marked.lexer(markdown, { gfm: true, breaks: false });
   const context: RenderContext = {
     config,
     headingNumbers: new Map(),
@@ -61,6 +64,8 @@ function renderBlockToken(token: Token, context: RenderContext): string {
       return renderBlockquote(token as Extract<Token, { type: 'blockquote' }>, context);
     case 'list':
       return renderList(token as Extract<Token, { type: 'list' }>, context);
+    case 'table':
+      return renderTable(token as Tokens.Table, context);
     case 'space':
       return '';
     case 'hr':
@@ -141,17 +146,77 @@ function renderList(token: Extract<Token, { type: 'list' }>, context: RenderCont
   const listStyle = styleToAttribute(context.config.block?.[tag]);
   const listItemStyle = styleToAttribute(context.config.inline?.listitem);
   const items = token.items
-    .map((item) => `<li style="${listItemStyle}">${renderListItemContent(item.tokens ?? [], context)}</li>`)
+    .map((item) => {
+      const taskMarker = item.task ? renderTaskMarker(item.checked === true) : '';
+      const contentTokens = item.task ? item.tokens.filter((itemToken) => itemToken.type !== 'checkbox') : item.tokens;
+      return `<li style="${listItemStyle}">${taskMarker}${renderListItemContent(contentTokens ?? [], context)}</li>`;
+    })
     .join('');
 
   return `<${tag} style="${listStyle}">${items}</${tag}>`;
 }
 
+function renderTaskMarker(checked: boolean): string {
+  const taskState = checked ? 'checked' : 'unchecked';
+  const marker = checked ? '☑' : '☐';
+  return `<span data-task-state="${taskState}" aria-hidden="true" style="display: inline; margin-right: 0.45em">${marker}</span>`;
+}
+
+function renderTable(token: Tokens.Table, context: RenderContext): string {
+  const header = token.header
+    .map((cell) => renderTableCell('th', cell, context))
+    .join('');
+  const rows = token.rows
+    .map(
+      (row) =>
+        `<tr style="${styleToAttribute(context.config.block?.tr)}">${row
+          .map((cell) => renderTableCell('td', cell, context))
+          .join('')}</tr>`,
+    )
+    .join('');
+
+  return `<section data-table-scroll="true" style="max-width: 100%; margin: 1.25em 0; overflow-x: auto"><table style="${styleToAttribute(
+    context.config.block?.table,
+  )}"><thead style="${styleToAttribute(context.config.block?.thead)}"><tr style="${styleToAttribute(
+    context.config.block?.tr,
+  )}">${header}</tr></thead><tbody>${rows}</tbody></table></section>`;
+}
+
+function renderTableCell(tag: TableCellTag, cell: Tokens.TableCell, context: RenderContext): string {
+  const alignmentStyle = cell.align ? { 'text-align': cell.align } : {};
+  const cellStyle = styleToAttribute({
+    ...context.config.block?.[tag],
+    ...alignmentStyle,
+  });
+  return `<${tag} style="${cellStyle}">${renderInlineTokens(cell.tokens ?? [], context)}</${tag}>`;
+}
+
 function renderCodeBlock(token: Extract<Token, { type: 'code' }>, context: RenderContext): string {
-  const languageClass = token.lang ? ` class="language-${escapeAttribute(token.lang)}"` : '';
-  return `<pre style="${styleToAttribute(context.config.block?.code_pre)}"><code${languageClass} style="${styleToAttribute(
-    context.config.block?.code,
-  )}">${escapeHtml(token.text)}</code></pre>`;
+  const highlightedCode = highlightArticleCode({ code: token.text, language: token.lang });
+  const languageLabel = highlightedCode.languageLabel
+    ? `<span aria-hidden="true" style="display: block; margin: 0 0 0.75em; color: #7b7f7c; font-family: ui-sans-serif, sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; line-height: 1">${escapeHtml(
+        highlightedCode.languageLabel,
+      )}</span>`
+    : '';
+  const preStyle = styleToAttribute({
+    margin: '1.25em 0',
+    padding: '1em 1.1em',
+    color: '#343835',
+    'background-color': '#f4f3ef',
+    border: '1px solid #deddd7',
+    'border-radius': '8px',
+    'overflow-x': 'auto',
+    ...context.config.block?.code_pre,
+  });
+  const codeStyle = styleToAttribute({
+    display: 'block',
+    color: 'inherit',
+    'white-space': 'pre-wrap',
+    'word-break': 'normal',
+    ...context.config.block?.code,
+  });
+
+  return `<pre data-code-language="${escapeAttribute(highlightedCode.languageLabel)}" style="${preStyle}">${languageLabel}<code style="${codeStyle}">${highlightedCode.html}</code></pre>`;
 }
 
 function renderHtmlBlockToken(token: Token, context: RenderContext): string {
@@ -216,10 +281,7 @@ function renderInlineToken(token: Token, context: RenderContext): string {
         ? renderInlineTokens(token.tokens, context)
         : renderFallbackStrongText(token.text, context);
     case 'strong':
-      return `<strong style="${styleToAttribute(context.config.inline?.strong)}">${renderInlineTokens(
-        token.tokens ?? [],
-        context,
-      )}</strong>`;
+      return renderStrongInline(renderInlineTokens(token.tokens ?? [], context), context);
     case 'em':
       return `<em style="${styleToAttribute(context.config.inline?.em)}">${renderInlineTokens(
         token.tokens ?? [],
@@ -227,6 +289,11 @@ function renderInlineToken(token: Token, context: RenderContext): string {
       )}</em>`;
     case 'codespan':
       return `<code style="${styleToAttribute(context.config.inline?.codespan)}">${escapeHtml(token.text)}</code>`;
+    case 'del':
+      return `<del style="${styleToAttribute({
+        'text-decoration': 'line-through',
+        ...context.config.inline?.del,
+      })}">${renderInlineTokens(token.tokens ?? [], context)}</del>`;
     case 'link':
       return `<a href="${escapeAttribute(token.href)}" style="${styleToAttribute(
         context.config.inline?.link,
@@ -268,12 +335,19 @@ function renderFallbackStrongText(text: string, context: RenderContext): string 
 
   while ((match = strongPattern.exec(text)) !== null) {
     html += escapeHtml(text.slice(cursor, match.index));
-    html += `<strong style="${styleToAttribute(context.config.inline?.strong)}">${escapeHtml(match[1])}</strong>`;
+    html += renderStrongInline(escapeHtml(match[1]), context);
     cursor = match.index + match[0].length;
   }
 
   html += escapeHtml(text.slice(cursor));
   return html;
+}
+
+function renderStrongInline(content: string, context: RenderContext): string {
+  return `<span data-inline-strong="true" style="${styleToAttribute({
+    ...context.config.inline?.strong,
+    display: 'inline',
+  })}">${content}</span>`;
 }
 
 function renderInsertedDecorationAfter(blockKey: string, context: RenderContext): string {

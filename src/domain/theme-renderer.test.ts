@@ -67,7 +67,8 @@ describe('renderThemeMarkdown', () => {
     expect(result.html).toContain('background-color: #ffffff');
     expect(result.html).toContain('data-title="01"');
     expect(result.html).toContain('<hr style="border-color: #ff5a3d">');
-    expect(result.html).toContain('<strong style="font-weight: 700">重点</strong>');
+    expect(result.html).toContain('data-inline-strong="true"');
+    expect(result.html).toContain('>重点</span>');
     expect(result.html).toContain('<ul style="padding-left: 0">');
   });
 
@@ -97,8 +98,56 @@ describe('renderThemeMarkdown', () => {
       theme: decoratedTheme,
     });
 
-    expect(result.html).toContain('<strong style="font-weight: 700">星链已成天花板。</strong>目前');
-    expect(result.html).toContain('<li style="list-style: none"><strong style="font-weight: 700">载荷革命</strong>：成本下降</li>');
+    expect(result.html).toContain('>星链已成天花板。</span>目前');
+    expect(result.html).toContain('>载荷革命</span>：成本下降</li>');
+  });
+
+  it('keeps emphasized list labels and their Chinese punctuation on the same inline flow', () => {
+    const result = renderThemeMarkdown({
+      markdown: '- **全部模板**：浏览完整的排版样式',
+      theme: decoratedTheme,
+    });
+
+    expect(result.html).toContain('data-inline-strong="true"');
+    expect(result.html).toContain('>全部模板</span>：浏览完整的排版样式');
+    expect(result.html).not.toContain('</span>\n：浏览完整的排版样式');
+  });
+
+  it('renders GFM tables with header and body cells', () => {
+    const result = renderThemeMarkdown({
+      markdown: '| 模板 | 用途 |\n| :--- | ---: |\n| **全部模板** | 浏览完整样式 |\n| 日常长文 | 通知与随笔 |',
+      theme: decoratedTheme,
+    });
+
+    expect(result.html).toContain('<table');
+    expect(result.html).toContain('<thead');
+    expect(result.html).toContain('<tbody>');
+    expect(result.html).toContain('<th');
+    expect(result.html).toContain('<td');
+    expect(result.html).toContain('>全部模板</span>');
+  });
+
+  it('renders task lists and strikethrough without interactive controls', () => {
+    const result = renderThemeMarkdown({
+      markdown: '- [x] 已完成\n- [ ] 待处理\n\n~~旧结论~~',
+      theme: decoratedTheme,
+    });
+
+    expect(result.html).toContain('data-task-state="checked"');
+    expect(result.html).toContain('data-task-state="unchecked"');
+    expect(result.html).not.toContain('<input');
+    expect(result.html).toContain('<del');
+  });
+
+  it('renders supported fenced code with a language label and highlighted tokens', () => {
+    const result = renderThemeMarkdown({
+      markdown: '```json\n{"name":"墨鱼","ready":true}\n```',
+      theme: decoratedTheme,
+    });
+
+    expect(result.html).toContain('data-code-language="JSON"');
+    expect(result.html).toContain('<span');
+    expect(result.html).toContain('&quot;name&quot;');
   });
 
   it('drops image metadata comments from rendered article content', () => {
