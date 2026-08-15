@@ -16,3 +16,4 @@ src/data/generated-article.ts
 .vscode/
 npm-debug.log*
 design-qa.md
+docs/social/
