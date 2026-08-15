@@ -129,16 +129,38 @@ textarea:focus-visible {
   gap: 1px;
 }
 
-.brandText small {
-  display: none;
-}
-
 .brandLockup strong {
   color: var(--ink);
   font-family: var(--font-brand);
   font-size: 19px;
   font-weight: 700;
   letter-spacing: 0.04em;
+}
+
+.creatorByline {
+  width: max-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.2;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+}
+
+.creatorByline i {
+  font-size: 10px;
+}
+
+.creatorByline:hover {
+  color: var(--ink-secondary);
+}
+
+.creatorByline:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .brandMark {
@@ -1381,7 +1403,7 @@ textarea:focus-visible {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 13px;
-  padding: 22px 22px 16px;
+  padding: 22px 22px 18px;
 }
 
 .clipboardConsentIcon {
@@ -1410,46 +1432,11 @@ textarea:focus-visible {
   line-height: 1.65;
 }
 
-.clipboardConsentNote {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px;
-  margin: 0 22px;
-  padding: 12px;
-  color: var(--ink-secondary);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface-subtle);
-}
-
-.clipboardConsentNote > i {
-  margin-top: 1px;
-  color: var(--muted);
-  font-size: 17px;
-}
-
-.clipboardConsentNote p {
-  display: grid;
-  gap: 3px;
-  margin: 0;
-}
-
-.clipboardConsentNote strong {
-  font-size: var(--text-ui);
-  line-height: 1.4;
-}
-
-.clipboardConsentNote span {
-  color: var(--muted);
-  font-size: var(--text-caption);
-  line-height: 1.6;
-}
-
 .clipboardConsentDialog footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 17px 22px 22px;
+  padding: 0 22px 22px;
 }
 
 .pasteDialog textarea {
@@ -1724,9 +1711,7 @@ textarea:focus-visible {
     line-height: 1.2;
   }
 
-  .brandText small {
-    display: block;
-    color: var(--muted);
+  .creatorByline {
     font-size: 10px;
     line-height: 1.2;
     letter-spacing: 0.04em;

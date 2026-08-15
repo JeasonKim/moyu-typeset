@@ -238,7 +238,16 @@ function renderApp(): void {
           <img class="brandMark" src="/moyu-mark.svg" alt="" aria-hidden="true">
           <span class="brandText">
             <strong>墨鱼排版</strong>
-            <small>公众号文章排版</small>
+            <a
+              class="creatorByline"
+              href="${creatorSiteUrl}"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="访问了不起的人个人主页"
+              title="去「了不起的人」看看其他作品"
+            >
+              <span>了不起的人 · 出品</span><i class="ti ti-arrow-up-right"></i>
+            </a>
           </span>
         </div>
         <div class="mobileHeaderActions" aria-label="站点相关操作">
@@ -1250,18 +1259,14 @@ function renderClipboardConsentDialog(): string {
         <header>
           <span class="clipboardConsentIcon"><i class="ti ti-clipboard-check"></i></span>
           <div>
-            <h2 id="clipboardConsentTitle">复制前说明</h2>
-            <p>接下来会把排版后的富文本写入系统剪贴板，方便你粘贴到微信公众号。</p>
+            <h2 id="clipboardConsentTitle">复制排版内容</h2>
+            <p>接下来会复制排版后的内容，方便你粘贴到微信公众号草稿箱。</p>
           </div>
         </header>
-        <div class="clipboardConsentNote">
-          <i class="ti ti-shield-lock"></i>
-          <p><strong>文章内容不会上传</strong><span>所有处理都在当前浏览器完成；浏览器可能会询问剪贴板权限。</span></p>
-        </div>
         <footer>
           <button class="dialogCancel" type="button" data-close-clipboard-consent>取消</button>
           <button class="dialogConfirm" type="button" data-confirm-clipboard-consent>
-            <i class="ti ti-copy-check"></i><span>同意并复制</span>
+            <i class="ti ti-copy-check"></i><span>复制内容</span>
           </button>
         </footer>
       </section>

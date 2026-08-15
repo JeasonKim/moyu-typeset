@@ -226,8 +226,8 @@ function renderWechatListMarker(ordered: boolean, index: number, style?: StyleMa
 
 function renderTaskMarker(checked: boolean): string {
   const taskState = checked ? 'checked' : 'unchecked';
-  const marker = checked ? '☑' : '☐';
-  return `<span data-task-state="${taskState}" aria-hidden="true" style="display: inline; margin-right: 0.45em">${marker}</span>`;
+  const marker = checked ? '✓' : '○';
+  return `<span data-task-state="${taskState}" aria-hidden="true" style="display: inline-block; width: 1.1em; margin-right: 0.45em; color: inherit; font-family: Arial, sans-serif; font-size: 0.92em; font-weight: 600; line-height: 1; text-align: center; vertical-align: 0.02em">${marker}</span>`;
 }
 
 function renderTable(token: Tokens.Table, context: RenderContext): string {
