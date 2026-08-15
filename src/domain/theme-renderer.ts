@@ -5,7 +5,11 @@ import type { StyleMap, ThemeComponent, ThemeConfig, ThemeDefinition } from './t
 export interface RenderThemeMarkdownInput {
   markdown: string;
   theme: ThemeDefinition;
+  readingAnchors?: boolean;
+  target?: ThemeRenderTarget;
 }
+
+export type ThemeRenderTarget = 'preview' | 'wechat-clipboard';
 
 export interface RenderThemeMarkdownResult {
   html: string;
@@ -32,8 +36,9 @@ export function renderThemeMarkdown(input: RenderThemeMarkdownInput): RenderThem
   const context: RenderContext = {
     config,
     headingNumbers: new Map(),
+    target: input.target ?? 'preview',
   };
-  const content = renderBlockTokens(tokens, context);
+  const content = renderBlockTokens(tokens, context, input.readingAnchors);
   const containerStyle = styleToAttribute({
     ...config.base,
     ...config.block?.container,
@@ -48,10 +53,29 @@ export function renderThemeMarkdown(input: RenderThemeMarkdownInput): RenderThem
 interface RenderContext {
   config: ThemeConfig;
   headingNumbers: Map<number, number>;
+  target: ThemeRenderTarget;
 }
 
-function renderBlockTokens(tokens: Token[], context: RenderContext): string {
-  return tokens.map((token) => renderBlockToken(token, context)).join('');
+function renderBlockTokens(tokens: Token[], context: RenderContext, readingAnchors = false): string {
+  let readingAnchorIndex = 0;
+  return tokens
+    .map((token) => {
+      const html = renderBlockToken(token, context);
+      if (!readingAnchors || !html) {
+        return html;
+      }
+
+      readingAnchorIndex += 1;
+      return attachReadingAnchor(html, `block-${readingAnchorIndex}`);
+    })
+    .join('');
+}
+
+function attachReadingAnchor(html: string, anchorId: string): string {
+  return html.replace(
+    /<([a-zA-Z][\w:-]*)(?=[\s>])/,
+    `<$1 data-reading-anchor="${escapeAttribute(anchorId)}"`,
+  );
 }
 
 function renderBlockToken(token: Token, context: RenderContext): string {
@@ -145,6 +169,11 @@ function renderList(token: Extract<Token, { type: 'list' }>, context: RenderCont
   const tag = token.ordered ? 'ol' : 'ul';
   const listStyle = styleToAttribute(context.config.block?.[tag]);
   const listItemStyle = styleToAttribute(context.config.inline?.listitem);
+
+  if (context.target === 'wechat-clipboard') {
+    return renderWechatCompatibleList(token, context, tag);
+  }
+
   const items = token.items
     .map((item) => {
       const taskMarker = item.task ? renderTaskMarker(item.checked === true) : '';
@@ -154,6 +183,45 @@ function renderList(token: Extract<Token, { type: 'list' }>, context: RenderCont
     .join('');
 
   return `<${tag} style="${listStyle}">${items}</${tag}>`;
+}
+
+function renderWechatCompatibleList(
+  token: Extract<Token, { type: 'list' }>,
+  context: RenderContext,
+  tag: 'ol' | 'ul',
+): string {
+  const configuredListStyle = context.config.block?.[tag];
+  const copiedListStyle = styleToAttribute({
+    ...configuredListStyle,
+    display: 'block',
+  });
+  const copiedItemStyle = styleToAttribute({
+    ...context.config.inline?.listitem,
+    display: 'block',
+  });
+  const items = token.items
+    .map((item, index) => {
+      const taskMarker = item.task ? renderTaskMarker(item.checked === true) : '';
+      const contentTokens = item.task ? item.tokens.filter((itemToken) => itemToken.type !== 'checkbox') : item.tokens;
+      const listMarker = item.task ? '' : renderWechatListMarker(token.ordered, index, configuredListStyle);
+      return `<section data-wechat-list-item="true" style="${copiedItemStyle}">${listMarker}${taskMarker}${renderListItemContent(
+        contentTokens ?? [],
+        context,
+      )}</section>`;
+    })
+    .join('');
+
+  return `<section data-wechat-list="${token.ordered ? 'ordered' : 'unordered'}" style="${copiedListStyle}">${items}</section>`;
+}
+
+function renderWechatListMarker(ordered: boolean, index: number, style?: StyleMap): string {
+  const configuredMarker = style?.['list-style'] ?? style?.list_style;
+  if (configuredMarker === 'none') {
+    return '';
+  }
+
+  const marker = ordered ? `${index + 1}.` : '•';
+  return `<span style="margin-right: 0.45em" data-wechat-list-marker="true">${marker}</span>`;
 }
 
 function renderTaskMarker(checked: boolean): string {
@@ -344,10 +412,10 @@ function renderFallbackStrongText(text: string, context: RenderContext): string 
 }
 
 function renderStrongInline(content: string, context: RenderContext): string {
-  return `<span data-inline-strong="true" style="${styleToAttribute({
+  return `<strong data-inline-strong="true" style="${styleToAttribute({
     ...context.config.inline?.strong,
     display: 'inline',
-  })}">${content}</span>`;
+  })}">${content}</strong>`;
 }
 
 function renderInsertedDecorationAfter(blockKey: string, context: RenderContext): string {

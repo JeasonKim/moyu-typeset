@@ -68,7 +68,7 @@ describe('renderThemeMarkdown', () => {
     expect(result.html).toContain('data-title="01"');
     expect(result.html).toContain('<hr style="border-color: #ff5a3d">');
     expect(result.html).toContain('data-inline-strong="true"');
-    expect(result.html).toContain('>重点</span>');
+    expect(result.html).toContain('>重点</strong>');
     expect(result.html).toContain('<ul style="padding-left: 0">');
   });
 
@@ -98,19 +98,46 @@ describe('renderThemeMarkdown', () => {
       theme: decoratedTheme,
     });
 
-    expect(result.html).toContain('>星链已成天花板。</span>目前');
-    expect(result.html).toContain('>载荷革命</span>：成本下降</li>');
+    expect(result.html).toContain('>星链已成天花板。</strong>目前');
+    expect(result.html).toContain('>载荷革命</strong>：成本下降</li>');
   });
 
-  it('keeps emphasized list labels and their Chinese punctuation on the same inline flow', () => {
+  it('uses semantic emphasis so WeChat keeps the label and following punctuation inline', () => {
     const result = renderThemeMarkdown({
       markdown: '- **全部模板**：浏览完整的排版样式',
       theme: decoratedTheme,
     });
 
     expect(result.html).toContain('data-inline-strong="true"');
-    expect(result.html).toContain('>全部模板</span>：浏览完整的排版样式');
-    expect(result.html).not.toContain('</span>\n：浏览完整的排版样式');
+    expect(result.html).toContain('>全部模板</strong>：浏览完整的排版样式');
+  });
+
+  it('serializes copied lists as stable blocks instead of native lists that WeChat rewrites', () => {
+    const result = renderThemeMarkdown({
+      markdown: '- **全部模板**：浏览完整的排版样式',
+      theme: decoratedTheme,
+      target: 'wechat-clipboard',
+    });
+
+    expect(result.html).not.toContain('<ul');
+    expect(result.html).not.toContain('<li');
+    expect(result.html).toContain('data-wechat-list="unordered"');
+    expect(result.html).toContain('data-wechat-list-item="true"');
+    expect(result.html).toContain('>全部模板</strong>：浏览完整的排版样式');
+  });
+
+  it('keeps visible ordered-list numbering in the copied block structure', () => {
+    const numberedTheme: ThemeDefinition = structuredClone(decoratedTheme);
+    numberedTheme.config!.block!.ol = { 'list-style': 'decimal' };
+
+    const result = renderThemeMarkdown({
+      markdown: '1. 打开 Markdown\n2. 选择主题',
+      theme: numberedTheme,
+      target: 'wechat-clipboard',
+    });
+
+    expect(result.html).toContain('data-wechat-list-marker="true">1.</span>打开 Markdown');
+    expect(result.html).toContain('data-wechat-list-marker="true">2.</span>选择主题');
   });
 
   it('renders GFM tables with header and body cells', () => {
@@ -124,7 +151,7 @@ describe('renderThemeMarkdown', () => {
     expect(result.html).toContain('<tbody>');
     expect(result.html).toContain('<th');
     expect(result.html).toContain('<td');
-    expect(result.html).toContain('>全部模板</span>');
+    expect(result.html).toContain('>全部模板</strong>');
   });
 
   it('renders task lists and strikethrough without interactive controls', () => {
@@ -148,6 +175,18 @@ describe('renderThemeMarkdown', () => {
     expect(result.html).toContain('data-code-language="JSON"');
     expect(result.html).toContain('<span');
     expect(result.html).toContain('&quot;name&quot;');
+  });
+
+  it('adds stable reading anchors only to preview output when requested', () => {
+    const markdown = '# 标题\n\n第一段。\n\n- 列表项';
+    const preview = renderThemeMarkdown({ markdown, theme: decoratedTheme, readingAnchors: true });
+    const copiedArticle = renderThemeMarkdown({ markdown, theme: decoratedTheme });
+
+    expect(preview.html.match(/data-reading-anchor="block-\d+"/g)).toHaveLength(3);
+    expect(preview.html).toContain('data-reading-anchor="block-1"');
+    expect(preview.html).toContain('data-reading-anchor="block-2"');
+    expect(preview.html).toContain('data-reading-anchor="block-3"');
+    expect(copiedArticle.html).not.toContain('data-reading-anchor');
   });
 
   it('drops image metadata comments from rendered article content', () => {

@@ -6,6 +6,8 @@ import {
   embedArticleDiagramsAsImages,
   type ArticleDiagramEmbeddingResult,
 } from './domain/article-diagrams';
+import { coordinateArticlePreparation } from './domain/article-preparation-coordinator';
+import { coordinateArticleRevealTransition } from './domain/article-reveal-transition';
 import {
   articleDisplayFileName,
   markdownDocumentFromFile,
@@ -25,7 +27,9 @@ import {
   templateCategories,
   type TemplateCategoryId,
 } from './domain/template-categories';
-import { articlePlainTextFromHtml, canCopyWechatRichText } from './domain/wechat-clipboard';
+import { buildTwitterShareUrl, isWechatBrowser, shareMoyuTypesetThroughSystem } from './domain/site-sharing';
+import { articlePlainTextFromHtml, canCopyWechatRichText, copyWechatArticle } from './domain/wechat-clipboard';
+import { decideWechatCopyEntry } from './domain/wechat-clipboard-consent';
 import {
   applyThemeStyleOverrides,
   buildPreviewBoardStyle,
@@ -33,12 +37,17 @@ import {
   shadowStyleForLevel,
 } from './domain/style-overrides';
 import { renderThemeMarkdown } from './domain/theme-renderer';
+import {
+  calculateReadingAnchorScrollAdjustment,
+  locateCurrentReadingAnchor,
+  type PreviewReadingAnchor,
+  type PreviewReadingBlockGeometry,
+} from './domain/preview-reading-anchor';
 import { themeTemplateDisplay } from './domain/theme-display';
 import { coordinateThemeRevealTransition } from './domain/theme-reveal-transition';
 import { filterThemesByQuery } from './domain/theme-search';
 import { selectPreviewTheme } from './domain/theme-selection';
 import type { ThemeDefinition, ThemesDataset } from './domain/theme-types';
-import { coordinateTypesettingFeedback } from './domain/typesetting-feedback';
 import type {
   BoardPattern,
   EditorTab,
@@ -49,10 +58,26 @@ import type {
 import { browserArticleDiagramRenderer } from './infrastructure/browser-article-diagram-renderer';
 
 type PreviewDevice = 'desktop' | 'mobile';
-type ThemeRevealPhase = 'idle' | 'brand-loading' | 'curtain-opening';
+type PreviewRevealPhase = 'idle' | 'brand-loading' | 'curtain-opening';
+type PreviewRevealContext = 'theme' | 'article' | null;
+type ToastAction = 'open-wechat-editor';
+
+interface WechatArticleClipboardContent {
+  html: string;
+  plainText: string;
+}
+
+interface ToastNotice {
+  message: string;
+  action?: ToastAction;
+  actionLabel?: string;
+}
 
 const creatorSiteUrl = 'https://liaobuqi.ren';
+const githubRepositoryUrl = 'https://github.com/JeasonKim/moyu-typeset';
+const publicSiteUrl = 'https://moyu.liaobuqi.ren/';
 const wechatEditorUrl = 'https://mp.weixin.qq.com/';
+const wechatClipboardConsentKey = 'moyu-typeset:wechat-clipboard-consent';
 
 const editorTabs: Array<{ id: EditorTab; label: string; icon: string }> = [
   { id: 'text', label: '文本', icon: 'ti-typography' },
@@ -101,37 +126,29 @@ const state = {
   templateListScrollTop: 0,
   previewScrollTop: 0,
   previewScrollLeft: 0,
+  previewReadingAnchor: null as PreviewReadingAnchor | null,
   previewReadingPositionShouldReset: false,
   pasteDialogOpen: false,
   supportDialogOpen: false,
-  typesettingFeedbackVisible: false,
-  themeRevealPhase: 'idle' as ThemeRevealPhase,
+  mobileShareDialogOpen: false,
+  clipboardConsentDialogOpen: false,
+  wechatClipboardConsentAcceptedThisSession: readWechatClipboardConsent(),
+  previewRevealPhase: 'idle' as PreviewRevealPhase,
+  previewRevealContext: null as PreviewRevealContext,
   pendingThemeId: null as string | null,
-  toast: '',
+  toast: null as ToastNotice | null,
   editor: readStoredEditorState() ?? createPristineEditorState(firstDecorationTarget(initialThemeSelection.selectedTheme)),
 };
 
 let toastTimer: number | undefined;
+let previewPositionRestoreFrame: number | undefined;
 
 const appRoot = document.querySelector<HTMLDivElement>('#app');
 if (!appRoot) {
   throw new Error('Missing #app root.');
 }
 const app = appRoot;
-const typesettingFeedback = coordinateTypesettingFeedback({
-  minimumVisibleMs: 800,
-  clock: {
-    now: () => window.performance.now(),
-  },
-  scheduler: {
-    schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
-    cancel: (timerId) => window.clearTimeout(timerId),
-  },
-  presentation: {
-    reveal: revealTypesettingFeedback,
-    conceal: concealTypesettingFeedback,
-  },
-});
+const articlePreparation = coordinateArticlePreparation();
 const themeRevealTransition = coordinateThemeRevealTransition({
   brandLoadingMs: 800,
   curtainOpeningMs: 1_400,
@@ -141,21 +158,48 @@ const themeRevealTransition = coordinateThemeRevealTransition({
   },
   presentation: {
     showBrandLoading: () => {
-      state.themeRevealPhase = 'brand-loading';
+      state.previewRevealContext = 'theme';
+      state.previewRevealPhase = 'brand-loading';
       renderApp();
     },
     openThemeCurtain: () => {
-      state.themeRevealPhase = 'curtain-opening';
+      state.previewRevealPhase = 'curtain-opening';
       renderApp();
     },
-    concludeThemeReveal: () => {
-      state.themeRevealPhase = 'idle';
-      state.pendingThemeId = null;
-      app.querySelector<HTMLElement>('[data-theme-reveal]')?.remove();
-      synchronizePreviewBusyState();
-    },
+    concludeThemeReveal: concludePreviewReveal,
   },
 });
+const articleRevealTransition = coordinateArticleRevealTransition({
+  minimumLoadingMs: 600,
+  curtainOpeningMs: 1_400,
+  clock: {
+    now: () => window.performance.now(),
+  },
+  scheduler: {
+    schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+    cancel: (timerId) => window.clearTimeout(timerId),
+  },
+  presentation: {
+    showLoading: () => {
+      state.previewRevealContext = 'article';
+      state.previewRevealPhase = 'brand-loading';
+      renderApp();
+    },
+    openCurtain: () => {
+      state.previewRevealPhase = 'curtain-opening';
+      renderApp();
+    },
+    concludeReveal: concludePreviewReveal,
+  },
+});
+
+function concludePreviewReveal(): void {
+  state.previewRevealPhase = 'idle';
+  state.previewRevealContext = null;
+  state.pendingThemeId = null;
+  app.querySelector<HTMLElement>('[data-preview-reveal]')?.remove();
+  app.querySelector<HTMLElement>('[data-article-drop-zone]')?.removeAttribute('aria-busy');
+}
 
 function renderApp(): void {
   rememberTemplateListScroll();
@@ -180,6 +224,14 @@ function renderApp(): void {
             <strong>墨鱼排版</strong>
             <small>公众号文章排版</small>
           </span>
+        </div>
+        <div class="mobileHeaderActions" aria-label="站点相关操作">
+          <a href="${githubRepositoryUrl}" target="_blank" rel="noopener noreferrer" aria-label="查看 GitHub 开源仓库" title="GitHub 开源仓库">
+            <i class="ti ti-brand-github"></i>
+          </a>
+          <button type="button" data-open-mobile-share aria-label="分享墨鱼排版" title="分享本站">
+            <i class="ti ti-share-3"></i>
+          </button>
         </div>
         <div class="documentChip" title="当前文章">
           <i class="ti ti-file-text"></i>
@@ -227,31 +279,18 @@ function renderApp(): void {
           <div
             class="stageCanvas ${state.previewDevice === 'mobile' ? 'isMobilePreview' : ''}"
             data-article-drop-zone
-            ${state.typesettingFeedbackVisible || state.themeRevealPhase !== 'idle' ? 'aria-busy="true"' : ''}
+            ${state.previewRevealPhase !== 'idle' ? 'aria-busy="true"' : ''}
           >
             <div class="dropOverlay" aria-hidden="true">
               <img class="dropMotionMark" src="/moyu-mark-motion.svg" alt="">
               <strong>松开后开始排版</strong>
               <span>Markdown 只在当前页面读取</span>
             </div>
-            <div
-              class="typesettingOverlay${state.typesettingFeedbackVisible ? ' isVisible' : ''}"
-              role="status"
-              aria-live="polite"
-              aria-hidden="${state.typesettingFeedbackVisible ? 'false' : 'true'}"
-              data-typesetting-feedback
-            >
-              <div class="typesettingFeedbackCard">
-                <img class="typesettingMotionMark" src="/moyu-mark-motion.svg" alt="">
-                <strong>正在排版</strong>
-                <span>正在生成文章预览…</span>
-              </div>
-            </div>
             <div class="previewBoard">
               ${renderedPreview}
             </div>
-            ${renderThemeRevealOverlay()}
           </div>
+          ${renderPreviewRevealOverlay()}
         </section>
 
         <aside class="rightInspector" aria-label="样式设置">
@@ -263,7 +302,9 @@ function renderApp(): void {
 
       ${state.pasteDialogOpen ? renderPasteDialog() : ''}
       ${state.supportDialogOpen ? renderSupportDialog() : ''}
-      ${state.toast ? `<div class="toast" role="status">${escapeHtml(state.toast)}</div>` : ''}
+      ${state.mobileShareDialogOpen ? renderMobileShareDialog() : ''}
+      ${state.clipboardConsentDialogOpen ? renderClipboardConsentDialog() : ''}
+      ${renderToast()}
     </main>
   `;
 
@@ -276,6 +317,8 @@ function renderApp(): void {
 function bindEvents(): void {
   bindArticleSourceEvents();
   bindSupportEvents();
+  bindSharingEvents();
+  bindClipboardConsentEvents();
 
   const templateList = app.querySelector<HTMLElement>('.templateList');
   templateList?.addEventListener('scroll', () => {
@@ -340,7 +383,12 @@ function bindEvents(): void {
     });
   });
 
-  app.querySelector<HTMLButtonElement>('[data-copy-article]')?.addEventListener('click', copyCurrentArticleHtml);
+  app.querySelector<HTMLButtonElement>('[data-copy-article]')?.addEventListener('click', enterWechatCopyFlow);
+
+  app.querySelector<HTMLButtonElement>('[data-toast-action="open-wechat-editor"]')?.addEventListener(
+    'click',
+    openWechatEditorFromToast,
+  );
 
   app.querySelectorAll<HTMLButtonElement>('[data-editor-tab]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -452,6 +500,7 @@ function bindArticleSourceEvents(): void {
   });
 
   app.querySelector<HTMLButtonElement>('[data-open-paste-dialog]')?.addEventListener('click', () => {
+    dismissToast();
     state.pasteDialogOpen = true;
     renderApp();
     app.querySelector<HTMLTextAreaElement>('#pastedMarkdown')?.focus();
@@ -490,6 +539,7 @@ function bindArticleSourceEvents(): void {
 
 function bindSupportEvents(): void {
   app.querySelector<HTMLButtonElement>('[data-open-support]')?.addEventListener('click', () => {
+    dismissToast();
     state.supportDialogOpen = true;
     renderApp();
     app.querySelector<HTMLElement>('.supportDialog')?.focus();
@@ -519,6 +569,78 @@ function closeSupportDialog(): void {
   app.querySelector<HTMLButtonElement>('[data-open-support]')?.focus();
 }
 
+function bindSharingEvents(): void {
+  app.querySelector<HTMLButtonElement>('[data-open-mobile-share]')?.addEventListener('click', () => {
+    dismissToast();
+    state.mobileShareDialogOpen = true;
+    renderApp();
+    app.querySelector<HTMLElement>('.mobileShareSheet')?.focus();
+  });
+
+  app.querySelectorAll<HTMLElement>('[data-close-mobile-share]').forEach((control) => {
+    control.addEventListener('click', () => closeMobileShareDialog());
+  });
+
+  const backdrop = app.querySelector<HTMLElement>('[data-mobile-share-backdrop]');
+  backdrop?.addEventListener('click', (event) => {
+    if (event.target === backdrop) {
+      closeMobileShareDialog();
+    }
+  });
+
+  app.querySelector<HTMLElement>('.mobileShareSheet')?.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeMobileShareDialog();
+    }
+  });
+
+  app.querySelector<HTMLButtonElement>('[data-share-through-system]')?.addEventListener('click', () => {
+    void shareSiteThroughSystem();
+  });
+  app.querySelector<HTMLButtonElement>('[data-share-to-twitter]')?.addEventListener('click', shareSiteToTwitter);
+  app.querySelector<HTMLButtonElement>('[data-copy-share-link]')?.addEventListener('click', () => {
+    void copyMobileShareLink();
+  });
+}
+
+function closeMobileShareDialog(): void {
+  state.mobileShareDialogOpen = false;
+  renderApp();
+  app.querySelector<HTMLButtonElement>('[data-open-mobile-share]')?.focus();
+}
+
+function bindClipboardConsentEvents(): void {
+  app.querySelectorAll<HTMLElement>('[data-close-clipboard-consent]').forEach((control) => {
+    control.addEventListener('click', () => closeClipboardConsentDialog());
+  });
+
+  app.querySelector<HTMLButtonElement>('[data-confirm-clipboard-consent]')?.addEventListener('click', () => {
+    acceptWechatClipboardConsent();
+    state.clipboardConsentDialogOpen = false;
+    renderApp();
+    void copyCurrentArticleHtml();
+  });
+
+  const backdrop = app.querySelector<HTMLElement>('[data-clipboard-consent-backdrop]');
+  backdrop?.addEventListener('click', (event) => {
+    if (event.target === backdrop) {
+      closeClipboardConsentDialog();
+    }
+  });
+
+  app.querySelector<HTMLElement>('.clipboardConsentDialog')?.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeClipboardConsentDialog();
+    }
+  });
+}
+
+function closeClipboardConsentDialog(): void {
+  state.clipboardConsentDialogOpen = false;
+  renderApp();
+  app.querySelector<HTMLButtonElement>('[data-copy-article]')?.focus();
+}
+
 async function previewMarkdownFile(file: File): Promise<void> {
   if (!supportsMarkdownFile(file)) {
     console.warn(`[theme-preview] opened file rejected name="${file.name}" type="${file.type}" reason="not markdown".`);
@@ -526,12 +648,13 @@ async function previewMarkdownFile(file: File): Promise<void> {
     return;
   }
 
-  const operation = typesettingFeedback.begin();
+  const operation = articlePreparation.begin();
+  const revealOperation = articleRevealTransition.begin();
 
   // 浏览器只在当前页面读取用户明确选择的文件，不上传、不持久化。
   try {
     const markdown = await file.text();
-    if (!operation.isCurrent()) {
+    if (!operation.isCurrent() || !revealOperation.isCurrent()) {
       console.warn(
         `[theme-preview] markdown preview discarded name="${file.name}" reason="a newer article source was selected".`,
       );
@@ -542,59 +665,61 @@ async function previewMarkdownFile(file: File): Promise<void> {
       markdown,
       renderer: browserArticleDiagramRenderer,
     });
-    if (!operation.isCurrent()) {
+    if (!operation.isCurrent() || !revealOperation.isCurrent()) {
       console.warn(
         `[theme-preview] diagram preview discarded name="${file.name}" reason="a newer article source was selected".`,
       );
       return;
     }
 
-    state.article = markdownDocumentFromFile({ fileName: file.name, markdown: diagramResult.markdown });
-    resetPreviewReadingPosition();
-    renderApp();
-    showToast(articleImportFeedback(`已打开 ${file.name}`, diagramResult));
+    revealOperation.revealArticle(() => {
+      state.article = markdownDocumentFromFile({ fileName: file.name, markdown: diagramResult.markdown });
+      resetPreviewReadingPosition();
+      renderApp();
+      showToast(articleImportFeedback(`已打开 ${file.name}`, diagramResult));
+    });
   } catch (error) {
     console.warn(`[theme-preview] markdown file preparation failed name="${file.name}" reason="${String(error)}".`);
-    if (operation.isCurrent()) {
+    if (operation.isCurrent() && revealOperation.isCurrent()) {
+      revealOperation.cancel();
       showToast('文件读取失败，请重新选择');
     }
-  } finally {
-    operation.finish();
   }
 }
 
 async function previewPastedMarkdown(markdown: string): Promise<void> {
-  const operation = typesettingFeedback.begin();
   state.pasteDialogOpen = false;
-  renderApp();
+  const operation = articlePreparation.begin();
+  const revealOperation = articleRevealTransition.begin();
 
   try {
     const diagramResult = await embedArticleDiagramsAsImages({
       markdown,
       renderer: browserArticleDiagramRenderer,
     });
-    if (!operation.isCurrent()) {
+    if (!operation.isCurrent() || !revealOperation.isCurrent()) {
       console.warn('[theme-preview] pasted markdown preview discarded reason="a newer article source was selected".');
       return;
     }
 
-    state.article = markdownDocumentFromPaste(diagramResult.markdown);
-    resetPreviewReadingPosition();
-    renderApp();
-    showToast(articleImportFeedback('已载入 Markdown', diagramResult));
+    revealOperation.revealArticle(() => {
+      state.article = markdownDocumentFromPaste(diagramResult.markdown);
+      resetPreviewReadingPosition();
+      renderApp();
+      showToast(articleImportFeedback('已载入 Markdown', diagramResult));
+    });
   } catch (error) {
     console.warn(`[theme-preview] pasted markdown preparation failed reason="${String(error)}".`);
-    if (operation.isCurrent()) {
+    if (operation.isCurrent() && revealOperation.isCurrent()) {
+      revealOperation.cancel();
       showToast('Markdown 处理失败，请重试');
     }
-  } finally {
-    operation.finish();
   }
 }
 
 async function typesetBundledDemoDiagrams(): Promise<void> {
   const sourceMarkdown = state.article.markdown;
-  const operation = typesettingFeedback.begin();
+  const operation = articlePreparation.begin();
 
   try {
     const diagramResult = await embedArticleDiagramsAsImages({
@@ -610,8 +735,6 @@ async function typesetBundledDemoDiagrams(): Promise<void> {
     renderApp();
   } catch (error) {
     console.warn(`[theme-preview] bundled demo diagram preparation failed reason="${String(error)}".`);
-  } finally {
-    operation.finish();
   }
 }
 
@@ -627,38 +750,6 @@ function articleImportFeedback(prefix: string, result: ArticleDiagramEmbeddingRe
   return prefix;
 }
 
-function revealTypesettingFeedback(): void {
-  state.typesettingFeedbackVisible = true;
-  const overlay = app.querySelector<HTMLElement>('[data-typesetting-feedback]');
-  const stageCanvas = app.querySelector<HTMLElement>('[data-article-drop-zone]');
-  if (!overlay || !stageCanvas) {
-    console.warn('[theme-preview] typesetting feedback unavailable reason="preview stage is missing".');
-    return;
-  }
-
-  overlay.classList.add('isVisible');
-  overlay.setAttribute('aria-hidden', 'false');
-  synchronizePreviewBusyState();
-}
-
-function concealTypesettingFeedback(): void {
-  state.typesettingFeedbackVisible = false;
-  const overlay = app.querySelector<HTMLElement>('[data-typesetting-feedback]');
-  overlay?.classList.remove('isVisible');
-  overlay?.setAttribute('aria-hidden', 'true');
-  synchronizePreviewBusyState();
-}
-
-function synchronizePreviewBusyState(): void {
-  const stageCanvas = app.querySelector<HTMLElement>('[data-article-drop-zone]');
-  if (state.typesettingFeedbackVisible || state.themeRevealPhase !== 'idle') {
-    stageCanvas?.setAttribute('aria-busy', 'true');
-    return;
-  }
-
-  stageCanvas?.removeAttribute('aria-busy');
-}
-
 function activateTheme(themeId: string): void {
   state.selectedThemeId = themeId;
   normalizeDecorationTarget(requireSelectedTheme(dataset.themes, themeId));
@@ -666,24 +757,27 @@ function activateTheme(themeId: string): void {
   writeThemeToUrl(themeId);
 }
 
-function renderThemeRevealOverlay(): string {
-  if (state.themeRevealPhase === 'idle') {
+function renderPreviewRevealOverlay(): string {
+  if (state.previewRevealPhase === 'idle') {
     return '';
   }
 
-  if (state.themeRevealPhase === 'brand-loading') {
+  if (state.previewRevealPhase === 'brand-loading') {
+    const loadingTitle = state.previewRevealContext === 'article' ? '正在载入 Markdown' : '正在打开新主题';
+    const loadingSummary = state.previewRevealContext === 'article' ? '正在读取内容与转换图表…' : '准备呈现新的视觉风格…';
     return `
-      <div class="themeRevealOverlay isBrandLoading" role="status" aria-live="polite" data-theme-reveal>
+      <div class="themeRevealOverlay isBrandLoading" role="status" aria-live="polite" data-preview-reveal>
         <div class="themeRevealBrand">
           <img src="/moyu-mark-motion.svg" alt="">
-          <strong>正在打开新主题</strong>
+          <strong>${loadingTitle}</strong>
+          <span>${loadingSummary}</span>
         </div>
       </div>
     `;
   }
 
   return `
-    <div class="themeRevealOverlay isCurtainOpening" aria-hidden="true" data-theme-reveal>
+    <div class="themeRevealOverlay isCurtainOpening" aria-hidden="true" data-preview-reveal>
       <div class="themeRevealAperture"></div>
     </div>
   `;
@@ -706,9 +800,11 @@ function refreshArticlePreview(): void {
     return;
   }
 
+  rememberPreviewReadingPosition();
   const selectedTheme = requireSelectedTheme(dataset.themes, state.selectedThemeId);
   const editedTheme = applyThemeStyleOverrides(selectedTheme, buildPreviewOverrides(state.editor));
   previewBoard.innerHTML = renderPreview(editedTheme);
+  restorePreviewReadingPosition();
 }
 
 function rememberTemplateListScroll(): void {
@@ -735,6 +831,7 @@ function rememberPreviewReadingPosition(): void {
   }
 
   if (isMobileReadingLayout()) {
+    state.previewReadingAnchor = null;
     state.previewScrollTop = window.scrollY;
     state.previewScrollLeft = window.scrollX;
     return;
@@ -747,11 +844,27 @@ function rememberPreviewReadingPosition(): void {
 
   state.previewScrollTop = stageCanvas.scrollTop;
   state.previewScrollLeft = stageCanvas.scrollLeft;
+  const stageBounds = stageCanvas.getBoundingClientRect();
+  const readingBlocks = [...stageCanvas.querySelectorAll<HTMLElement>('[data-reading-anchor]')].map(
+    (block): PreviewReadingBlockGeometry => {
+      const blockBounds = block.getBoundingClientRect();
+      return {
+        anchorId: block.dataset.readingAnchor ?? '',
+        topOffset: blockBounds.top - stageBounds.top,
+        height: blockBounds.height,
+      };
+    },
+  );
+  state.previewReadingAnchor = locateCurrentReadingAnchor({
+    viewportHeight: stageCanvas.clientHeight,
+    blocks: readingBlocks,
+  });
 }
 
 function restorePreviewReadingPosition(): void {
   const scrollTop = state.previewReadingPositionShouldReset ? 0 : state.previewScrollTop;
   const scrollLeft = state.previewReadingPositionShouldReset ? 0 : state.previewScrollLeft;
+  const readingAnchor = state.previewReadingPositionShouldReset ? null : state.previewReadingAnchor;
   state.previewReadingPositionShouldReset = false;
 
   const restore = () => {
@@ -760,20 +873,50 @@ function restorePreviewReadingPosition(): void {
       return;
     }
 
-    app.querySelector<HTMLElement>('.stageCanvas')?.scrollTo({
+    const stageCanvas = app.querySelector<HTMLElement>('.stageCanvas');
+    stageCanvas?.scrollTo({
       top: scrollTop,
       left: scrollLeft,
       behavior: 'instant',
     });
+    if (!stageCanvas || !readingAnchor) {
+      return;
+    }
+
+    const targetBlock = [...stageCanvas.querySelectorAll<HTMLElement>('[data-reading-anchor]')].find(
+      (block) => block.dataset.readingAnchor === readingAnchor.anchorId,
+    );
+    if (!targetBlock) {
+      console.warn(
+        `[theme-preview] reading anchor unavailable anchor="${readingAnchor.anchorId}". Falling back to scrollTop=${scrollTop}.`,
+      );
+      return;
+    }
+
+    const stageBounds = stageCanvas.getBoundingClientRect();
+    const targetBounds = targetBlock.getBoundingClientRect();
+    const adjustment = calculateReadingAnchorScrollAdjustment({
+      anchor: readingAnchor,
+      targetBlock: {
+        anchorId: readingAnchor.anchorId,
+        topOffset: targetBounds.top - stageBounds.top,
+        height: targetBounds.height,
+      },
+    });
+    stageCanvas.scrollTop += adjustment;
   };
 
   restore();
-  window.requestAnimationFrame(restore);
+  if (previewPositionRestoreFrame !== undefined) {
+    window.cancelAnimationFrame(previewPositionRestoreFrame);
+  }
+  previewPositionRestoreFrame = window.requestAnimationFrame(restore);
 }
 
 function resetPreviewReadingPosition(): void {
   state.previewScrollTop = 0;
   state.previewScrollLeft = 0;
+  state.previewReadingAnchor = null;
   state.previewReadingPositionShouldReset = true;
 }
 
@@ -821,8 +964,8 @@ function renderTemplatePanel(themes: ThemeDefinition[], selectedTheme: ThemeDefi
       }
     </nav>
     <div class="creatorFooter">
-      <a href="${creatorSiteUrl}" target="_blank" rel="noopener noreferrer">
-        <span>「了不起的人」出品</span><i class="ti ti-arrow-up-right"></i>
+      <a href="${githubRepositoryUrl}" target="_blank" rel="noopener noreferrer" title="查看 GitHub 开源仓库">
+        <i class="ti ti-brand-github"></i><span>GitHub 开源</span>
       </a>
       <button type="button" data-open-support>
         <i class="ti ti-coffee"></i><span>请作者喝杯咖啡</span>
@@ -900,7 +1043,7 @@ function renderMobileThemeDock(selectedTheme: ThemeDefinition): string {
 }
 
 function renderPreview(editedTheme: ThemeDefinition): string {
-  const result = renderThemeMarkdown({ markdown: state.article.markdown, theme: editedTheme });
+  const result = renderThemeMarkdown({ markdown: state.article.markdown, theme: editedTheme, readingAnchors: true });
   return `<div class="articleFrame">${result.html}</div>`;
 }
 
@@ -989,12 +1132,100 @@ function renderSupportDialog(): string {
           </figure>
         </div>
         <footer class="supportDialogFooter">
-          <p>量力随缘，不支持也完全没关系。一个 Star、一句建议或一次分享，同样很珍贵。</p>
+          <p>量力随缘，不支持也完全没关系。谢谢你愿意让这个小工具继续慢慢变好。</p>
           <a href="${creatorSiteUrl}" target="_blank" rel="noopener noreferrer">
             <span>去「了不起的人」看看其他作品</span><i class="ti ti-arrow-up-right"></i>
           </a>
         </footer>
       </section>
+    </div>
+  `;
+}
+
+function renderMobileShareDialog(): string {
+  return `
+    <div class="dialogBackdrop mobileShareBackdrop" role="presentation" data-mobile-share-backdrop>
+      <section
+        class="mobileShareSheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mobileShareTitle"
+        tabindex="-1"
+      >
+        <header>
+          <div>
+            <h2 id="mobileShareTitle">分享墨鱼排版</h2>
+            <p>把这个免费开源的小工具转给有需要的朋友。</p>
+          </div>
+          <button type="button" data-close-mobile-share aria-label="关闭分享面板">
+            <i class="ti ti-x"></i>
+          </button>
+        </header>
+        <div class="mobileShareOptions">
+          <button type="button" data-share-through-system>
+            <i class="ti ti-share-3"></i>
+            <span><strong>系统分享</strong><small>微信、信息等</small></span>
+          </button>
+          <button type="button" data-share-to-twitter>
+            <i class="ti ti-brand-x"></i>
+            <span><strong>Twitter / X</strong><small>发布分享链接</small></span>
+          </button>
+          <button type="button" data-copy-share-link>
+            <i class="ti ti-link"></i>
+            <span><strong>复制链接</strong><small>分享不可用时使用</small></span>
+          </button>
+        </div>
+        <p class="mobileShareHint">iOS 与 Android 会打开系统分享面板；微信内请使用右上角转发。</p>
+      </section>
+    </div>
+  `;
+}
+
+function renderClipboardConsentDialog(): string {
+  return `
+    <div class="dialogBackdrop clipboardConsentBackdrop" role="presentation" data-clipboard-consent-backdrop>
+      <section
+        class="clipboardConsentDialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="clipboardConsentTitle"
+        tabindex="-1"
+      >
+        <header>
+          <span class="clipboardConsentIcon"><i class="ti ti-clipboard-check"></i></span>
+          <div>
+            <h2 id="clipboardConsentTitle">复制前说明</h2>
+            <p>接下来会把排版后的富文本写入系统剪贴板，方便你粘贴到微信公众号。</p>
+          </div>
+        </header>
+        <div class="clipboardConsentNote">
+          <i class="ti ti-shield-lock"></i>
+          <p><strong>文章内容不会上传</strong><span>所有处理都在当前浏览器完成；浏览器可能会询问剪贴板权限。</span></p>
+        </div>
+        <footer>
+          <button class="dialogCancel" type="button" data-close-clipboard-consent>取消</button>
+          <button class="dialogConfirm" type="button" data-confirm-clipboard-consent>
+            <i class="ti ti-copy-check"></i><span>同意并复制</span>
+          </button>
+        </footer>
+      </section>
+    </div>
+  `;
+}
+
+function renderToast(): string {
+  if (!state.toast) {
+    return '';
+  }
+
+  return `
+    <div class="toast${state.toast.action ? ' hasAction' : ''}" role="status">
+      <span>${escapeHtml(state.toast.message)}</span>
+      ${
+        state.toast.action
+          ? `<button type="button" data-toast-action="${state.toast.action}">${escapeHtml(state.toast.actionLabel ?? '')}<i class="ti ti-arrow-up-right"></i></button>`
+          : ''
+      }
     </div>
   `;
 }
@@ -1214,74 +1445,290 @@ function requireSelectedTheme(themes: ThemeDefinition[], themeId: string): Theme
   }).selectedTheme;
 }
 
-async function copyCurrentArticleHtml(): Promise<void> {
-  const wechatEditorWindow = window.open(wechatEditorUrl, '_blank');
-  if (wechatEditorWindow) {
-    wechatEditorWindow.opener = null;
-  } else {
-    console.warn('[theme-preview] WeChat editor window blocked reason="browser denied the new tab".');
-  }
-  const wechatEditorFeedback = wechatEditorWindow ? '，并打开公众号后台' : '；请手动打开公众号后台';
+function enterWechatCopyFlow(): void {
+  const decision = decideWechatCopyEntry({
+    acceptedThisSession: state.wechatClipboardConsentAcceptedThisSession,
+  });
 
+  if (decision === 'request-consent') {
+    dismissToast();
+    state.clipboardConsentDialogOpen = true;
+    renderApp();
+    app.querySelector<HTMLElement>('.clipboardConsentDialog')?.focus();
+    return;
+  }
+
+  void copyCurrentArticleHtml();
+}
+
+async function copyCurrentArticleHtml(): Promise<void> {
   const selectedTheme = requireSelectedTheme(dataset.themes, state.selectedThemeId);
   const editedTheme = applyThemeStyleOverrides(selectedTheme, buildPreviewOverrides(state.editor));
-  const html = renderThemeMarkdown({ markdown: state.article.markdown, theme: editedTheme }).html;
+  const html = renderThemeMarkdown({
+    markdown: state.article.markdown,
+    theme: editedTheme,
+    target: 'wechat-clipboard',
+  }).html;
   const plainText = articlePlainTextFromHtml(html);
   const canWriteWechatRichText = canCopyWechatRichText({
     canCreateClipboardItem: typeof ClipboardItem === 'function',
     canWriteRichContent: typeof navigator.clipboard?.write === 'function',
   });
 
-  if (!canWriteWechatRichText) {
+  const copyResult = await copyWechatArticle({
+    canCopyAsynchronously: canWriteWechatRichText,
+    copySynchronously: () => copyWechatArticleSynchronously({ html, plainText }),
+    copyAsynchronously: async () => {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([plainText], { type: 'text/plain' }),
+        }),
+      ]);
+    },
+  });
+
+  if (copyResult.status === 'failed') {
+    const failureReason = copyResult.reason === 'rejected' ? String(copyResult.error) : 'clipboard APIs unavailable';
     console.warn(
-      '[theme-preview] rich clipboard write is unavailable. Falling back to plain html copy for WeChat article content.',
+      `[theme-preview] WeChat article copy failed reason="${failureReason}" secure_context=${window.isSecureContext}.`,
     );
-    fallbackCopyText(html);
-    showToast(`已复制 HTML${wechatEditorFeedback}`);
+    showToast('复制失败，请检查浏览器剪贴板权限');
     return;
   }
 
+  showActionToast({
+    message: '内容已复制，可以粘贴到公众号后台。',
+    action: 'open-wechat-editor',
+    actionLabel: '打开公众号后台',
+  });
+}
+
+function openWechatEditorFromToast(): void {
+  window.clearTimeout(toastTimer);
+  state.toast = null;
+  renderApp();
+
+  const wechatEditorWindow = window.open(wechatEditorUrl, '_blank');
+  if (wechatEditorWindow) {
+    wechatEditorWindow.opener = null;
+    return;
+  }
+
+  console.warn('[theme-preview] WeChat editor window blocked reason="browser denied the user-triggered new tab".');
+  showToast('浏览器阻止了新标签页，请允许弹窗后重试');
+}
+
+function copyWechatArticleSynchronously(content: WechatArticleClipboardContent): boolean {
+  const copySurface = document.createElement('section');
+  copySurface.contentEditable = 'true';
+  copySurface.tabIndex = -1;
+  copySurface.setAttribute('aria-hidden', 'true');
+  copySurface.style.position = 'fixed';
+  copySurface.style.left = '-10000px';
+  copySurface.style.top = '0';
+  copySurface.style.width = '1px';
+  copySurface.style.maxHeight = '1px';
+  copySurface.style.overflow = 'hidden';
+  copySurface.innerHTML = content.html;
+
+  const selection = window.getSelection();
+  const previousRanges = selection ? Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index)) : [];
+  const previouslyFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const articleRange = document.createRange();
+  articleRange.selectNodeContents(copySurface);
+
+  copySurface.addEventListener('copy', (event) => {
+    if (!event.clipboardData) {
+      return;
+    }
+
+    event.clipboardData.setData('text/html', content.html);
+    event.clipboardData.setData('text/plain', content.plainText);
+    event.preventDefault();
+  });
+  document.body.appendChild(copySurface);
+
   try {
-    await navigator.clipboard.write([
-      new ClipboardItem({
-        'text/html': new Blob([html], { type: 'text/html' }),
-        'text/plain': new Blob([plainText], { type: 'text/plain' }),
-      }),
-    ]);
-    showToast(`已复制${wechatEditorFeedback}`);
+    copySurface.focus({ preventScroll: true });
+    selection?.removeAllRanges();
+    selection?.addRange(articleRange);
+    const copied = document.execCommand('copy');
+    if (!copied) {
+      console.warn('[theme-preview] synchronous rich copy did not complete reason="document.execCommand returned false".');
+    }
+    return copied;
   } catch (error) {
-    console.warn(`[theme-preview] rich clipboard write failed reason="${String(error)}". Falling back to plain html copy.`);
-    fallbackCopyText(html);
-    showToast(`已复制 HTML${wechatEditorFeedback}`);
+    console.warn(`[theme-preview] synchronous rich copy failed reason="${String(error)}".`);
+    return false;
+  } finally {
+    copySurface.remove();
+    selection?.removeAllRanges();
+    previousRanges.forEach((range) => selection?.addRange(range));
+    previouslyFocusedElement?.focus({ preventScroll: true });
   }
 }
 
-function fallbackCopyText(text: string): void {
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', 'true');
-  textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
-  document.body.appendChild(textarea);
-  textarea.select();
+async function shareSiteThroughSystem(): Promise<void> {
+  state.mobileShareDialogOpen = false;
+  renderApp();
+
+  const result = await shareMoyuTypesetThroughSystem({
+    inWechatBrowser: isWechatBrowser(window.navigator.userAgent),
+    nativeShareSupported: typeof navigator.share === 'function',
+    shareNatively: async () => {
+      await navigator.share({
+        title: '墨鱼排版',
+        text: '免费开源的公众号 Markdown 排版工具，打开即用。',
+        url: publicSiteUrl,
+      });
+    },
+    copySiteLink: copyPublicSiteLink,
+  });
+
+  if (result.status === 'cancelled') {
+    return;
+  }
+
+  if (result.status === 'guided') {
+    presentToast({ message: '请点击微信右上角菜单，选择“转发给朋友”' }, 4_000);
+    return;
+  }
+
+  if (result.status === 'failed') {
+    console.warn(
+      `[theme-preview] system share failed url="${publicSiteUrl}" reason="native share and clipboard fallback unavailable".`,
+    );
+    showToast('分享没有完成，请手动复制本站网址');
+    return;
+  }
+
+  showToast(result.method === 'native' ? '分享已完成' : '系统分享不可用，链接已复制');
+}
+
+function shareSiteToTwitter(): void {
+  state.mobileShareDialogOpen = false;
+  renderApp();
+
+  const shareWindow = window.open(
+    buildTwitterShareUrl({
+      text: '免费开源的公众号 Markdown 排版工具，打开即用。',
+      url: publicSiteUrl,
+    }),
+    '_blank',
+  );
+  if (shareWindow) {
+    shareWindow.opener = null;
+    return;
+  }
+
+  console.warn('[theme-preview] Twitter share window blocked reason="browser denied the user-triggered new tab".');
+  showToast('浏览器阻止了分享页面，请允许弹窗后重试');
+}
+
+async function copyMobileShareLink(): Promise<void> {
+  state.mobileShareDialogOpen = false;
+  renderApp();
+
+  if (await copyPublicSiteLink()) {
+    showToast('分享链接已复制');
+    return;
+  }
+
+  console.warn(`[theme-preview] mobile share link copy failed url="${publicSiteUrl}".`);
+  showToast('复制失败，请手动复制本站网址');
+}
+
+async function copyPublicSiteLink(): Promise<boolean> {
+  if (copyPlainTextSynchronously(publicSiteUrl)) {
+    return true;
+  }
+
+  if (typeof navigator.clipboard?.writeText !== 'function') {
+    return false;
+  }
 
   try {
-    document.execCommand('copy');
+    await navigator.clipboard.writeText(publicSiteUrl);
+    return true;
   } catch (error) {
-    console.warn(`[theme-preview] fallback copy failed reason="${String(error)}".`);
+    console.warn(`[theme-preview] site link clipboard fallback failed url="${publicSiteUrl}" reason="${String(error)}".`);
+    return false;
+  }
+}
+
+function copyPlainTextSynchronously(text: string): boolean {
+  const copyInput = document.createElement('textarea');
+  copyInput.value = text;
+  copyInput.setAttribute('readonly', 'true');
+  copyInput.style.position = 'fixed';
+  copyInput.style.left = '-10000px';
+  copyInput.style.top = '0';
+  document.body.appendChild(copyInput);
+  copyInput.select();
+
+  try {
+    return document.execCommand('copy');
+  } catch (error) {
+    console.warn(`[theme-preview] synchronous site link copy failed reason="${String(error)}".`);
+    return false;
   } finally {
-    document.body.removeChild(textarea);
+    copyInput.remove();
+  }
+}
+
+function readWechatClipboardConsent(): boolean {
+  try {
+    const storedConsent = window.sessionStorage.getItem(wechatClipboardConsentKey);
+    if (storedConsent === null) {
+      return false;
+    }
+    if (storedConsent === 'accepted') {
+      return true;
+    }
+
+    console.warn(
+      `[theme-preview] clipboard consent ignored stored_value="${storedConsent}" reason="unknown session value". Requesting consent again.`,
+    );
+    return false;
+  } catch (error) {
+    console.warn(`[theme-preview] clipboard consent read failed reason="${String(error)}". Requesting consent again.`);
+    return false;
+  }
+}
+
+function acceptWechatClipboardConsent(): void {
+  state.wechatClipboardConsentAcceptedThisSession = true;
+  try {
+    window.sessionStorage.setItem(wechatClipboardConsentKey, 'accepted');
+  } catch (error) {
+    console.warn(
+      `[theme-preview] clipboard consent persistence failed reason="${String(error)}". Keeping consent for the current page only.`,
+    );
   }
 }
 
 function showToast(message: string): void {
-  state.toast = message;
+  presentToast({ message }, 1_800);
+}
+
+function showActionToast(notice: ToastNotice): void {
+  presentToast(notice, 10_000);
+}
+
+function presentToast(notice: ToastNotice, visibleMs: number): void {
+  state.toast = notice;
   window.clearTimeout(toastTimer);
   renderApp();
   toastTimer = window.setTimeout(() => {
-    state.toast = '';
+    state.toast = null;
     renderApp();
-  }, 1800);
+  }, visibleMs);
+}
+
+function dismissToast(): void {
+  window.clearTimeout(toastTimer);
+  state.toast = null;
 }
 
 function readStoredThemeId(): string | null {
@@ -1478,7 +1925,7 @@ function decorationTargets(theme: ThemeDefinition): Array<{
   return Object.entries(theme.config?.rules ?? {})
     .filter(([, rule]) => Boolean(rule.decoration))
     .map(([ruleKey, rule]) => ({
-      label: `${decorationRuleLabel(ruleKey)} ${ruleKey}`,
+      label: decorationRuleLabel(ruleKey),
       ruleKey,
       componentName: rule.decoration ?? '',
       variant: rule.variant,
@@ -1651,8 +2098,8 @@ function decorationRuleLabel(ruleKey: string): string {
     h2: '二级标题',
     h3: '三级标题',
     blockquote: '引用块',
-    h2_content: 'h2_content',
-    section_divider: 'section_divider',
+    h2_content: '二级标题内容',
+    section_divider: '章节分隔线',
   };
   return labels[ruleKey] ?? ruleKey;
 }
