@@ -517,7 +517,7 @@
             "text-decoration": "none"
           },
           "strong": {
-            "color": "#0D0D0D",
+            "color": "inherit",
             "padding": "0 0.08em",
             "font-size": "inherit",
             "background": "linear-gradient(180deg, transparent 62%, rgba(210, 255, 92, 0.42) 62%)",
