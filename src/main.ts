@@ -38,6 +38,7 @@ import {
 } from './domain/style-overrides';
 import { renderThemeMarkdown } from './domain/theme-renderer';
 import {
+  calculateUnobstructedReadingViewport,
   calculateReadingAnchorScrollAdjustment,
   locateCurrentReadingAnchor,
   type PreviewReadingAnchor,
@@ -71,6 +72,21 @@ interface ToastNotice {
   message: string;
   action?: ToastAction;
   actionLabel?: string;
+}
+
+interface PreviewScrollPosition {
+  top: number;
+  left: number;
+}
+
+interface PreviewReadingSurface {
+  root: HTMLElement;
+  viewportTop: number;
+  viewportHeight: number;
+  scrollTop: number;
+  scrollLeft: number;
+  restoreScroll: (position: PreviewScrollPosition) => void;
+  advanceScroll: (distance: number) => void;
 }
 
 const creatorSiteUrl = 'https://liaobuqi.ren';
@@ -830,33 +846,26 @@ function rememberPreviewReadingPosition(): void {
     return;
   }
 
-  if (isMobileReadingLayout()) {
-    state.previewReadingAnchor = null;
-    state.previewScrollTop = window.scrollY;
-    state.previewScrollLeft = window.scrollX;
+  const readingSurface = resolvePreviewReadingSurface();
+  if (!readingSurface) {
     return;
   }
 
-  const stageCanvas = app.querySelector<HTMLElement>('.stageCanvas');
-  if (!stageCanvas) {
-    return;
-  }
-
-  state.previewScrollTop = stageCanvas.scrollTop;
-  state.previewScrollLeft = stageCanvas.scrollLeft;
-  const stageBounds = stageCanvas.getBoundingClientRect();
-  const readingBlocks = [...stageCanvas.querySelectorAll<HTMLElement>('[data-reading-anchor]')].map(
+  // 两端都以“当前可见内容块 + 块内进度”记录阅读位置，滚动容器差异由 reading surface 收敛。
+  state.previewScrollTop = readingSurface.scrollTop;
+  state.previewScrollLeft = readingSurface.scrollLeft;
+  const readingBlocks = [...readingSurface.root.querySelectorAll<HTMLElement>('[data-reading-anchor]')].map(
     (block): PreviewReadingBlockGeometry => {
       const blockBounds = block.getBoundingClientRect();
       return {
         anchorId: block.dataset.readingAnchor ?? '',
-        topOffset: blockBounds.top - stageBounds.top,
+        topOffset: blockBounds.top - readingSurface.viewportTop,
         height: blockBounds.height,
       };
     },
   );
   state.previewReadingAnchor = locateCurrentReadingAnchor({
-    viewportHeight: stageCanvas.clientHeight,
+    viewportHeight: readingSurface.viewportHeight,
     blocks: readingBlocks,
   });
 }
@@ -868,22 +877,18 @@ function restorePreviewReadingPosition(): void {
   state.previewReadingPositionShouldReset = false;
 
   const restore = () => {
-    if (isMobileReadingLayout()) {
-      window.scrollTo({ top: scrollTop, left: scrollLeft, behavior: 'instant' });
+    const readingSurface = resolvePreviewReadingSurface();
+    if (!readingSurface) {
       return;
     }
 
-    const stageCanvas = app.querySelector<HTMLElement>('.stageCanvas');
-    stageCanvas?.scrollTo({
-      top: scrollTop,
-      left: scrollLeft,
-      behavior: 'instant',
-    });
-    if (!stageCanvas || !readingAnchor) {
+    readingSurface.restoreScroll({ top: scrollTop, left: scrollLeft });
+    if (!readingAnchor) {
       return;
     }
 
-    const targetBlock = [...stageCanvas.querySelectorAll<HTMLElement>('[data-reading-anchor]')].find(
+    // 主题改变块高度后，回到同一内容块的同一阅读进度，而不是沿用失真的绝对像素位置。
+    const targetBlock = [...readingSurface.root.querySelectorAll<HTMLElement>('[data-reading-anchor]')].find(
       (block) => block.dataset.readingAnchor === readingAnchor.anchorId,
     );
     if (!targetBlock) {
@@ -893,17 +898,16 @@ function restorePreviewReadingPosition(): void {
       return;
     }
 
-    const stageBounds = stageCanvas.getBoundingClientRect();
     const targetBounds = targetBlock.getBoundingClientRect();
     const adjustment = calculateReadingAnchorScrollAdjustment({
       anchor: readingAnchor,
       targetBlock: {
         anchorId: readingAnchor.anchorId,
-        topOffset: targetBounds.top - stageBounds.top,
+        topOffset: targetBounds.top - readingSurface.viewportTop,
         height: targetBounds.height,
       },
     });
-    stageCanvas.scrollTop += adjustment;
+    readingSurface.advanceScroll(adjustment);
   };
 
   restore();
@@ -911,6 +915,58 @@ function restorePreviewReadingPosition(): void {
     window.cancelAnimationFrame(previewPositionRestoreFrame);
   }
   previewPositionRestoreFrame = window.requestAnimationFrame(restore);
+}
+
+function resolvePreviewReadingSurface(): PreviewReadingSurface | null {
+  if (isMobileReadingLayout()) {
+    return resolveMobileReadingSurface();
+  }
+
+  const stageCanvas = app.querySelector<HTMLElement>('.stageCanvas');
+  if (!stageCanvas) {
+    return null;
+  }
+
+  const stageBounds = stageCanvas.getBoundingClientRect();
+  return {
+    root: stageCanvas,
+    viewportTop: stageBounds.top,
+    viewportHeight: stageCanvas.clientHeight,
+    scrollTop: stageCanvas.scrollTop,
+    scrollLeft: stageCanvas.scrollLeft,
+    restoreScroll: ({ top, left }) => {
+      stageCanvas.scrollTo({ top, left, behavior: 'instant' });
+    },
+    advanceScroll: (distance) => {
+      stageCanvas.scrollTop += distance;
+    },
+  };
+}
+
+function resolveMobileReadingSurface(): PreviewReadingSurface {
+  const commandBarBounds = app.querySelector<HTMLElement>('.commandBar')?.getBoundingClientRect();
+  const themeDockBounds = app.querySelector<HTMLElement>('.mobileThemeDock')?.getBoundingClientRect();
+  // 吸顶栏和浮动主题栏会遮住文章，这部分不能计入移动端的真实阅读视口。
+  const readingViewport = calculateUnobstructedReadingViewport({
+    viewportTop: 0,
+    viewportBottom: window.innerHeight,
+    topObstructionBottom: commandBarBounds && commandBarBounds.height > 0 ? commandBarBounds.bottom : undefined,
+    bottomObstructionTop: themeDockBounds && themeDockBounds.height > 0 ? themeDockBounds.top : undefined,
+  });
+
+  return {
+    root: app,
+    viewportTop: readingViewport.top,
+    viewportHeight: readingViewport.height,
+    scrollTop: window.scrollY,
+    scrollLeft: window.scrollX,
+    restoreScroll: ({ top, left }) => {
+      window.scrollTo({ top, left, behavior: 'instant' });
+    },
+    advanceScroll: (distance) => {
+      window.scrollBy({ top: distance, left: 0, behavior: 'instant' });
+    },
+  };
 }
 
 function resetPreviewReadingPosition(): void {

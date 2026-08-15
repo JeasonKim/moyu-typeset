@@ -1,3 +1,8 @@
+export interface PreviewReadingViewport {
+  top: number;
+  height: number;
+}
+
 export interface PreviewReadingBlockGeometry {
   anchorId: string;
   topOffset: number;
@@ -18,6 +23,25 @@ export interface LocateCurrentReadingAnchorInput {
 export interface CalculateReadingAnchorScrollAdjustmentInput {
   anchor: PreviewReadingAnchor;
   targetBlock: PreviewReadingBlockGeometry | null;
+}
+
+export interface CalculateUnobstructedReadingViewportInput {
+  viewportTop: number;
+  viewportBottom: number;
+  topObstructionBottom?: number;
+  bottomObstructionTop?: number;
+}
+
+export function calculateUnobstructedReadingViewport(
+  input: CalculateUnobstructedReadingViewportInput,
+): PreviewReadingViewport {
+  const top = Math.max(input.viewportTop, input.topObstructionBottom ?? input.viewportTop);
+  const bottom = Math.min(input.viewportBottom, input.bottomObstructionTop ?? input.viewportBottom);
+
+  return {
+    top,
+    height: Math.max(0, bottom - top),
+  };
 }
 
 export function locateCurrentReadingAnchor(

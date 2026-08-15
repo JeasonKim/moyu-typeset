@@ -1,8 +1,44 @@
 import { describe, expect, it } from 'vitest';
 import {
+  calculateUnobstructedReadingViewport,
   calculateReadingAnchorScrollAdjustment,
   locateCurrentReadingAnchor,
 } from './preview-reading-anchor';
+
+describe('calculateUnobstructedReadingViewport', () => {
+  it('excludes the sticky header and floating theme dock on mobile', () => {
+    const viewport = calculateUnobstructedReadingViewport({
+      viewportTop: 0,
+      viewportBottom: 844,
+      topObstructionBottom: 58,
+      bottomObstructionTop: 720,
+    });
+
+    expect(viewport).toEqual({ top: 58, height: 662 });
+  });
+
+  it('ignores obstructions outside the browser viewport', () => {
+    const viewport = calculateUnobstructedReadingViewport({
+      viewportTop: 0,
+      viewportBottom: 844,
+      topObstructionBottom: -12,
+      bottomObstructionTop: 900,
+    });
+
+    expect(viewport).toEqual({ top: 0, height: 844 });
+  });
+
+  it('returns an empty viewport when obstructions overlap', () => {
+    const viewport = calculateUnobstructedReadingViewport({
+      viewportTop: 0,
+      viewportBottom: 844,
+      topObstructionBottom: 500,
+      bottomObstructionTop: 420,
+    });
+
+    expect(viewport).toEqual({ top: 500, height: 0 });
+  });
+});
 
 describe('locateCurrentReadingAnchor', () => {
   it('captures progress inside the first content block crossing the viewport top', () => {
