@@ -424,7 +424,12 @@ function renderInsertedDecorationAfter(blockKey: string, context: RenderContext)
     return '';
   }
 
-  const componentHtml = renderComponent(context.config.components?.[rule.decoration], {}, rule.variant);
+  const dividerComponent = context.config.components?.[rule.decoration];
+  if (dividerComponent?.enabled === false) {
+    return '';
+  }
+
+  const componentHtml = renderComponent(dividerComponent, {}, rule.variant);
   if (componentHtml) {
     return componentHtml;
   }

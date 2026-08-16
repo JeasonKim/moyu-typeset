@@ -44,6 +44,10 @@ const baseOverrides: ThemeStyleOverrides = {
   },
 };
 
+const visibleSectionDivider = {
+  sectionDividerEnabled: true,
+};
+
 const theme: ThemeDefinition = {
   id: 'theme-a',
   label: '主题 A',
@@ -80,7 +84,7 @@ const theme: ThemeDefinition = {
 
 describe('applyThemeStyleOverrides', () => {
   it('merges text, image, background and decoration overrides without mutating the source theme', () => {
-    const nextTheme = applyThemeStyleOverrides(theme, baseOverrides);
+    const nextTheme = applyThemeStyleOverrides(theme, baseOverrides, visibleSectionDivider);
 
     expect(nextTheme.config?.block?.p).toEqual({
       color: '#222222',
@@ -106,10 +110,37 @@ describe('applyThemeStyleOverrides', () => {
           color: '#ffffff',
         },
       },
-    });
+    }, visibleSectionDivider);
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('component="missing"'));
     warn.mockRestore();
+  });
+
+  it('hides the theme section divider without mutating its original component', () => {
+    const themeWithDivider: ThemeDefinition = structuredClone(theme);
+    if (!themeWithDivider.config) {
+      throw new Error('测试主题缺少配置');
+    }
+    themeWithDivider.config.rules = {
+      section_divider: {
+        decoration: 'section_divider',
+        insert_after: ['h2'],
+      },
+    };
+    themeWithDivider.config.components = {
+      ...themeWithDivider.config.components,
+      section_divider: {
+        enabled: true,
+        template: '<hr>',
+      },
+    };
+
+    const nextTheme = applyThemeStyleOverrides(themeWithDivider, baseOverrides, {
+      sectionDividerEnabled: false,
+    });
+
+    expect(nextTheme.config?.components?.section_divider.enabled).toBe(false);
+    expect(themeWithDivider.config.components.section_divider.enabled).toBe(true);
   });
 });
 

@@ -1,4 +1,14 @@
-import type { StyleEditorState, ThemeStyleOverrides } from './style-editor-types';
+import type {
+  StyleEditorState,
+  ThemeDecorationPreferences,
+  ThemeStyleOverrides,
+} from './style-editor-types';
+
+function createDefaultDecorationPreferences(): ThemeDecorationPreferences {
+  return {
+    sectionDividerEnabled: false,
+  };
+}
 
 export function createEmptyStyleOverrides(): ThemeStyleOverrides {
   return {
@@ -21,6 +31,7 @@ export function createPristineEditorState(decorationTarget: string): StyleEditor
     activeTab: 'text',
     textTarget: 'p',
     decorationTarget,
+    decorationPreferences: createDefaultDecorationPreferences(),
     overrides: createEmptyStyleOverrides(),
     board: {
       enabled: false,
@@ -36,6 +47,10 @@ export function focusStyleEditorOnBodyText(editorState: StyleEditorState): Style
   return {
     ...editorState,
     textTarget: 'p',
+    decorationPreferences: {
+      ...createDefaultDecorationPreferences(),
+      ...editorState.decorationPreferences,
+    },
   };
 }
 

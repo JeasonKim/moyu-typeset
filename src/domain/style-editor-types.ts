@@ -20,6 +20,10 @@ export interface ThemeStyleOverrides {
   decorations: Record<string, StyleMap>;
 }
 
+export interface ThemeDecorationPreferences {
+  sectionDividerEnabled: boolean;
+}
+
 export type BoardPattern = 'off' | 'fine-grid' | 'standard-grid' | 'coarse-grid' | 'dot' | 'cross';
 
 export interface PreviewBoardSettings {
@@ -34,6 +38,7 @@ export interface StyleEditorState {
   activeTab: EditorTab;
   textTarget: TextStyleTarget;
   decorationTarget: string;
+  decorationPreferences: ThemeDecorationPreferences;
   overrides: ThemeStyleOverrides;
   board: PreviewBoardSettings;
 }

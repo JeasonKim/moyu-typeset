@@ -1,7 +1,16 @@
-import type { PreviewBoardSettings, ShadowLevel, ThemeStyleOverrides } from './style-editor-types';
-import type { StyleMap, ThemeDefinition } from './theme-types';
+import type {
+  PreviewBoardSettings,
+  ShadowLevel,
+  ThemeDecorationPreferences,
+  ThemeStyleOverrides,
+} from './style-editor-types';
+import type { StyleMap, ThemeConfig, ThemeDefinition } from './theme-types';
 
-export function applyThemeStyleOverrides(theme: ThemeDefinition, overrides: ThemeStyleOverrides): ThemeDefinition {
+export function applyThemeStyleOverrides(
+  theme: ThemeDefinition,
+  overrides: ThemeStyleOverrides,
+  decorationPreferences: ThemeDecorationPreferences,
+): ThemeDefinition {
   if (!theme.config) {
     console.warn(
       `[style-overrides] theme config missing theme="${theme.value || theme.id}". Ignored style overrides.`,
@@ -58,7 +67,30 @@ export function applyThemeStyleOverrides(theme: ThemeDefinition, overrides: Them
     };
   }
 
+  applySectionDividerPreference(nextConfig, decorationPreferences, theme.value || theme.id);
+
   return nextTheme;
+}
+
+function applySectionDividerPreference(
+  config: ThemeConfig,
+  decorationPreferences: ThemeDecorationPreferences,
+  themeId: string,
+): void {
+  const dividerComponentName = config.rules?.section_divider?.decoration;
+  if (!dividerComponentName) {
+    return;
+  }
+
+  const dividerComponent = config.components?.[dividerComponentName];
+  if (!dividerComponent) {
+    console.warn(
+      `[style-overrides] section divider preference ignored theme="${themeId}" component="${dividerComponentName}" reason="component missing".`,
+    );
+    return;
+  }
+
+  dividerComponent.enabled = decorationPreferences.sectionDividerEnabled;
 }
 
 export function shadowStyleForLevel(level: ShadowLevel): string {

@@ -72,6 +72,24 @@ describe('renderThemeMarkdown', () => {
     expect(result.html).toContain('<ul style="padding-left: 0">');
   });
 
+  it('silently skips a section divider that the user has disabled', () => {
+    const themeWithoutSectionDivider = structuredClone(decoratedTheme);
+    if (!themeWithoutSectionDivider.config?.components?.divider) {
+      throw new Error('测试主题缺少章节分隔符');
+    }
+    themeWithoutSectionDivider.config.components.divider.enabled = false;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const result = renderThemeMarkdown({
+      markdown: '# 标题',
+      theme: themeWithoutSectionDivider,
+    });
+
+    expect(result.html).not.toContain('<hr');
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('inserted decoration missing'));
+    warn.mockRestore();
+  });
+
   it('uses section_html and logs when theme config is missing', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 

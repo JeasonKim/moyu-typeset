@@ -6,7 +6,17 @@ import {
   embedArticleDiagramsAsImages,
   type ArticleDiagramEmbeddingResult,
 } from './domain/article-diagrams';
-import { coordinateArticlePreparation } from './domain/article-preparation-coordinator';
+import {
+  collectLocalArticleImages,
+  embedLocalArticleImages,
+  type ArticleImageEmbeddingResult,
+  type ArticleImageSource,
+  type LocalArticleImage,
+} from './domain/article-images';
+import {
+  coordinateArticlePreparation,
+  type ArticlePreparationOperation,
+} from './domain/article-preparation-coordinator';
 import { coordinateArticleRevealTransition } from './domain/article-reveal-transition';
 import {
   articleDisplayFileName,
@@ -57,11 +67,27 @@ import type {
   ThemeStyleOverrides,
 } from './domain/style-editor-types';
 import { browserArticleDiagramRenderer } from './infrastructure/browser-article-diagram-renderer';
+import {
+  articleImageDirectoryPermission,
+  canChooseArticleImageDirectory,
+  chooseArticleImageDirectory,
+  forgetArticleImageDirectory,
+  recallArticleImageDirectory,
+  rememberArticleImageDirectory,
+} from './infrastructure/browser-article-image-directory';
+import {
+  articleImageSourceFromDirectoryHandle,
+  articleImageSourceFromSelectedDirectory,
+  directoryContainsOpenedArticle,
+  locateOpenedArticleInSelectedDirectory,
+  type DirectoryArticleIdentity,
+} from './infrastructure/browser-article-image-source';
 
 type PreviewDevice = 'desktop' | 'mobile';
 type PreviewRevealPhase = 'idle' | 'brand-loading' | 'curtain-opening';
 type PreviewRevealContext = 'theme' | 'article' | null;
 type ToastAction = 'open-wechat-editor';
+type ArticleImageResolutionPhase = 'permission-required' | 'resolving' | 'partial';
 
 interface WechatArticleClipboardContent {
   html: string;
@@ -87,6 +113,19 @@ interface PreviewReadingSurface {
   scrollLeft: number;
   restoreScroll: (position: PreviewScrollPosition) => void;
   advanceScroll: (distance: number) => void;
+}
+
+interface ArticleImageResolutionState {
+  phase: ArticleImageResolutionPhase;
+  totalImageCount: number;
+  embeddedImageCount: number;
+  unresolvedImages: LocalArticleImage[];
+}
+
+interface PreparedArticleImages {
+  markdown: string;
+  resolution: ArticleImageResolutionState | null;
+  embeddedImageCount: number;
 }
 
 const creatorSiteUrl = 'https://liaobuqi.ren';
@@ -152,18 +191,23 @@ const state = {
   previewRevealPhase: 'idle' as PreviewRevealPhase,
   previewRevealContext: null as PreviewRevealContext,
   pendingThemeId: null as string | null,
+  articleImages: null as ArticleImageResolutionState | null,
   toast: null as ToastNotice | null,
   editor: readStoredEditorState() ?? createPristineEditorState(firstDecorationTarget(initialThemeSelection.selectedTheme)),
 };
 
 let toastTimer: number | undefined;
 let previewPositionRestoreFrame: number | undefined;
+let openedArticleIdentity: DirectoryArticleIdentity | null = null;
+let recentArticleImageDirectory: FileSystemDirectoryHandle | null = null;
+let articleImageDirectoryPickerFallbackRequired = false;
 
 const appRoot = document.querySelector<HTMLDivElement>('#app');
 if (!appRoot) {
   throw new Error('Missing #app root.');
 }
 const app = appRoot;
+const recentArticleImageDirectoryReady = recallRecentArticleImageDirectory();
 const articlePreparation = coordinateArticlePreparation();
 const themeRevealTransition = coordinateThemeRevealTransition({
   brandLoadingMs: 800,
@@ -223,7 +267,11 @@ function renderApp(): void {
 
   const selectedTheme = requireSelectedTheme(dataset.themes, state.selectedThemeId);
   normalizeDecorationTarget(selectedTheme);
-  const editedTheme = applyThemeStyleOverrides(selectedTheme, buildPreviewOverrides(state.editor));
+  const editedTheme = applyThemeStyleOverrides(
+    selectedTheme,
+    buildPreviewOverrides(state.editor),
+    state.editor.decorationPreferences,
+  );
   const renderedPreview = renderPreview(editedTheme);
   const selectedThemeDisplay = themeTemplateDisplay(selectedTheme);
   const visibleTemplateThemes = filterThemesByQuery(
@@ -265,6 +313,7 @@ function renderApp(): void {
         </div>
         <div class="commandActions">
           <input id="markdownFileInput" class="visuallyHidden" type="file" accept=".md,.markdown,text/markdown">
+          <input id="articleImageDirectoryInput" class="visuallyHidden" type="file" webkitdirectory multiple>
           <button class="commandButton" type="button" data-open-markdown>
             <i class="ti ti-file-upload"></i><span>打开 Markdown</span>
           </button>
@@ -300,6 +349,10 @@ function renderApp(): void {
               </button>
             </div>
           </header>
+
+          <div class="articleImageNoticeSlot">
+            ${renderArticleImageNotice()}
+          </div>
 
           <div
             class="stageCanvas ${state.previewDevice === 'mobile' ? 'isMobilePreview' : ''}"
@@ -515,12 +568,27 @@ function bindEvents(): void {
 
 function bindArticleSourceEvents(): void {
   const fileInput = app.querySelector<HTMLInputElement>('#markdownFileInput');
+  const articleImageDirectoryInput = app.querySelector<HTMLInputElement>('#articleImageDirectoryInput');
   app.querySelector<HTMLButtonElement>('[data-open-markdown]')?.addEventListener('click', () => fileInput?.click());
   fileInput?.addEventListener('change', () => {
     const file = fileInput.files?.[0];
     fileInput.value = '';
     if (file) {
       void previewMarkdownFile(file);
+    }
+  });
+  app.querySelector<HTMLButtonElement>('[data-resolve-article-images]')?.addEventListener('click', () => {
+    if (!articleImageDirectoryPickerFallbackRequired && canChooseArticleImageDirectory()) {
+      void revealArticleImagesFromDirectoryPicker();
+      return;
+    }
+    articleImageDirectoryInput?.click();
+  });
+  articleImageDirectoryInput?.addEventListener('change', () => {
+    const files = Array.from(articleImageDirectoryInput.files ?? []);
+    articleImageDirectoryInput.value = '';
+    if (files.length > 0) {
+      void revealArticleImagesFromSelectedDirectory(files);
     }
   });
 
@@ -697,11 +765,25 @@ async function previewMarkdownFile(file: File): Promise<void> {
       return;
     }
 
+    const articleIdentity: DirectoryArticleIdentity = { fileName: file.name, markdown };
+    const preparedArticleImages = await prepareArticleImagesFromRecentDirectory(
+      diagramResult.markdown,
+      articleIdentity,
+    );
+    if (!operation.isCurrent() || !revealOperation.isCurrent()) {
+      console.warn(
+        `[theme-preview] local image preview discarded name="${file.name}" reason="a newer article source was selected".`,
+      );
+      return;
+    }
+
     revealOperation.revealArticle(() => {
-      state.article = markdownDocumentFromFile({ fileName: file.name, markdown: diagramResult.markdown });
+      openedArticleIdentity = articleIdentity;
+      state.article = markdownDocumentFromFile({ fileName: file.name, markdown: preparedArticleImages.markdown });
+      state.articleImages = preparedArticleImages.resolution;
       resetPreviewReadingPosition();
       renderApp();
-      showToast(articleImportFeedback(`已打开 ${file.name}`, diagramResult));
+      showToast(articleImportFeedback(`已打开 ${file.name}`, diagramResult, preparedArticleImages));
     });
   } catch (error) {
     console.warn(`[theme-preview] markdown file preparation failed name="${file.name}" reason="${String(error)}".`);
@@ -727,11 +809,15 @@ async function previewPastedMarkdown(markdown: string): Promise<void> {
       return;
     }
 
+    const preparedArticleImages = pendingArticleImages(diagramResult.markdown);
+
     revealOperation.revealArticle(() => {
-      state.article = markdownDocumentFromPaste(diagramResult.markdown);
+      openedArticleIdentity = null;
+      state.article = markdownDocumentFromPaste(preparedArticleImages.markdown);
+      state.articleImages = preparedArticleImages.resolution;
       resetPreviewReadingPosition();
       renderApp();
-      showToast(articleImportFeedback('已载入 Markdown', diagramResult));
+      showToast(articleImportFeedback('已载入 Markdown', diagramResult, preparedArticleImages));
     });
   } catch (error) {
     console.warn(`[theme-preview] pasted markdown preparation failed reason="${String(error)}".`);
@@ -763,16 +849,288 @@ async function typesetBundledDemoDiagrams(): Promise<void> {
   }
 }
 
-function articleImportFeedback(prefix: string, result: ArticleDiagramEmbeddingResult): string {
+function pendingArticleImages(markdown: string): PreparedArticleImages {
+  const localImages = collectLocalArticleImages(markdown);
+  return {
+    markdown,
+    embeddedImageCount: 0,
+    resolution:
+      localImages.length > 0
+        ? {
+            phase: 'permission-required',
+            totalImageCount: localImages.length,
+            embeddedImageCount: 0,
+            unresolvedImages: localImages,
+          }
+        : null,
+  };
+}
+
+async function prepareArticleImagesFromRecentDirectory(
+  markdown: string,
+  articleIdentity: DirectoryArticleIdentity,
+): Promise<PreparedArticleImages> {
+  const pendingImages = pendingArticleImages(markdown);
+  if (!pendingImages.resolution) {
+    return pendingImages;
+  }
+
+  // 复用历史授权前先确认权限仍然有效，并校验目录中的 Markdown 就是当前文章。
+  await recentArticleImageDirectoryReady;
+  const directoryHandle = recentArticleImageDirectory;
+  if (!directoryHandle) {
+    return pendingImages;
+  }
+
+  try {
+    const permission = await articleImageDirectoryPermission(directoryHandle, false);
+    if (permission !== 'granted') {
+      console.warn(
+        `[theme-preview] remembered article image directory not reused directory="${directoryHandle.name}" permission="${permission}" article="${articleIdentity.fileName}". Keeping ${pendingImages.resolution.totalImageCount} local image placeholders until permission is granted.`,
+      );
+      return pendingImages;
+    }
+
+    const matchesArticle = await directoryContainsOpenedArticle(directoryHandle, articleIdentity);
+    if (!matchesArticle) {
+      console.warn(
+        `[theme-preview] remembered article image directory discarded directory="${directoryHandle.name}" article="${articleIdentity.fileName}" reason="article file missing or content differs". Keeping ${pendingImages.resolution.totalImageCount} local image placeholders.`,
+      );
+      recentArticleImageDirectory = null;
+      await forgetRememberedArticleImageDirectory();
+      return pendingImages;
+    }
+
+    const embeddingResult = await embedLocalArticleImages({
+      markdown,
+      source: articleImageSourceFromDirectoryHandle(directoryHandle),
+    });
+    return preparedArticleImagesFromEmbedding(pendingImages.resolution, embeddingResult);
+  } catch (error) {
+    console.warn(
+      `[theme-preview] remembered article image directory failed directory="${directoryHandle.name}" article="${articleIdentity.fileName}" reason="${String(
+        error,
+      )}". Keeping ${pendingImages.resolution.totalImageCount} local image placeholders.`,
+    );
+    return pendingImages;
+  }
+}
+
+async function revealArticleImagesFromDirectoryPicker(): Promise<void> {
+  const currentResolution = state.articleImages;
+  if (!currentResolution || currentResolution.phase === 'resolving') {
+    return;
+  }
+
+  let directoryHandle: FileSystemDirectoryHandle;
+  try {
+    // 必须直接在点击事件产生的用户激活中打开系统选择器，避免异步操作让授权弹窗被浏览器拦截。
+    directoryHandle = await chooseArticleImageDirectory(recentArticleImageDirectory);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return;
+    }
+    console.warn(`[theme-preview] article image directory selection failed reason="${String(error)}".`);
+    articleImageDirectoryPickerFallbackRequired = true;
+    showToast('目录授权不可用，请再次点击“显示配图”');
+    return;
+  }
+
+  const operation = articlePreparation.begin();
+  state.articleImages = { ...currentResolution, phase: 'resolving' };
+  renderApp();
+
+  try {
+    // 文件导入场景必须校验文章身份，防止误用上一次目录中的同名图片。
+    if (openedArticleIdentity) {
+      const matchesArticle = await directoryContainsOpenedArticle(directoryHandle, openedArticleIdentity);
+      if (!matchesArticle) {
+        console.warn(
+          `[theme-preview] selected article image directory rejected directory="${directoryHandle.name}" article="${openedArticleIdentity.fileName}" reason="article file missing or content differs".`,
+        );
+        restoreArticleImageResolution(operation, currentResolution);
+        showToast(`请选择 ${openedArticleIdentity.fileName} 所在的文件夹`);
+        return;
+      }
+    }
+
+    recentArticleImageDirectory = directoryHandle;
+    void rememberSelectedArticleImageDirectory(directoryHandle);
+    await revealCurrentArticleImages(
+      articleImageSourceFromDirectoryHandle(directoryHandle),
+      operation,
+      currentResolution,
+    );
+  } catch (error) {
+    console.warn(
+      `[theme-preview] selected article image directory failed directory="${directoryHandle.name}" reason="${String(error)}".`,
+    );
+    restoreArticleImageResolution(operation, currentResolution);
+    showToast('读取文章配图失败，请重新选择');
+  }
+}
+
+async function revealArticleImagesFromSelectedDirectory(files: ReadonlyArray<File>): Promise<void> {
+  const currentResolution = state.articleImages;
+  if (!currentResolution || currentResolution.phase === 'resolving') {
+    return;
+  }
+
+  const operation = articlePreparation.begin();
+  state.articleImages = { ...currentResolution, phase: 'resolving' };
+  renderApp();
+
+  try {
+    // 兼容选择器会返回目录内的文件清单，先定位内容完全一致的 Markdown，再建立图片相对路径基准。
+    let articleDirectoryPath = '';
+    if (openedArticleIdentity) {
+      const locatedArticleDirectory = await locateOpenedArticleInSelectedDirectory({
+        files,
+        fileName: openedArticleIdentity.fileName,
+        markdown: openedArticleIdentity.markdown,
+      });
+      if (locatedArticleDirectory === null) {
+        console.warn(
+          `[theme-preview] selected article attachment files rejected article="${openedArticleIdentity.fileName}" file_count=${files.length} reason="article file missing or content differs".`,
+        );
+        restoreArticleImageResolution(operation, currentResolution);
+        showToast(`请选择 ${openedArticleIdentity.fileName} 所在的文件夹`);
+        return;
+      }
+      articleDirectoryPath = locatedArticleDirectory;
+    }
+
+    await revealCurrentArticleImages(
+      articleImageSourceFromSelectedDirectory({ files, articleDirectoryPath }),
+      operation,
+      currentResolution,
+    );
+  } catch (error) {
+    console.warn(
+      `[theme-preview] selected article attachment files failed file_count=${files.length} reason="${String(error)}".`,
+    );
+    restoreArticleImageResolution(operation, currentResolution);
+    showToast('读取文章配图失败，请重新选择');
+  }
+}
+
+async function revealCurrentArticleImages(
+  source: ArticleImageSource,
+  operation: ArticlePreparationOperation,
+  previousResolution: ArticleImageResolutionState,
+): Promise<void> {
+  // 每张图片独立解析；成功项立即进入文章，失败项继续保留占位并允许再次选择。
+  const embeddingResult = await embedLocalArticleImages({ markdown: state.article.markdown, source });
+  if (!operation.isCurrent()) {
+    console.warn(
+      `[theme-preview] resolved article images discarded source="${source.label}" reason="a newer article source was selected".`,
+    );
+    return;
+  }
+
+  const preparedImages = preparedArticleImagesFromEmbedding(previousResolution, embeddingResult);
+  state.article = { ...state.article, markdown: preparedImages.markdown };
+  state.articleImages = preparedImages.resolution;
+  renderApp();
+
+  if (!preparedImages.resolution) {
+    showToast(`${previousResolution.totalImageCount} 张本地配图已全部显示`);
+    return;
+  }
+
+  showToast(
+    `已显示 ${preparedImages.resolution.embeddedImageCount}/${preparedImages.resolution.totalImageCount} 张本地配图`,
+  );
+}
+
+function preparedArticleImagesFromEmbedding(
+  previousResolution: ArticleImageResolutionState,
+  result: ArticleImageEmbeddingResult,
+): PreparedArticleImages {
+  const embeddedImageCount = previousResolution.embeddedImageCount + result.embeddedImageCount;
+  return {
+    markdown: result.markdown,
+    embeddedImageCount: result.embeddedImageCount,
+    resolution:
+      result.unresolvedImages.length > 0
+        ? {
+            phase: 'partial',
+            totalImageCount: previousResolution.totalImageCount,
+            embeddedImageCount,
+            unresolvedImages: result.unresolvedImages,
+          }
+        : null,
+  };
+}
+
+function restoreArticleImageResolution(
+  operation: ArticlePreparationOperation,
+  previousResolution: ArticleImageResolutionState,
+): void {
+  if (!operation.isCurrent()) {
+    return;
+  }
+  state.articleImages = previousResolution;
+  renderApp();
+}
+
+async function recallRecentArticleImageDirectory(): Promise<void> {
+  try {
+    const recalledDirectory = await recallArticleImageDirectory();
+    if (!recentArticleImageDirectory) {
+      recentArticleImageDirectory = recalledDirectory;
+    }
+  } catch (error) {
+    console.warn(
+      `[theme-preview] remembered article image directory read failed reason="${String(error)}". Falling back to a new directory selection.`,
+    );
+    if (!recentArticleImageDirectory) {
+      recentArticleImageDirectory = null;
+    }
+  }
+}
+
+async function rememberSelectedArticleImageDirectory(directoryHandle: FileSystemDirectoryHandle): Promise<void> {
+  try {
+    await rememberArticleImageDirectory(directoryHandle);
+  } catch (error) {
+    console.warn(
+      `[theme-preview] article image directory persistence failed directory="${directoryHandle.name}" reason="${String(
+        error,
+      )}". Keeping access for the current page only.`,
+    );
+  }
+}
+
+async function forgetRememberedArticleImageDirectory(): Promise<void> {
+  try {
+    await forgetArticleImageDirectory();
+  } catch (error) {
+    console.warn(
+      `[theme-preview] mismatched article image directory cleanup failed reason="${String(error)}". The invalid handle may be checked again next time.`,
+    );
+  }
+}
+
+function articleImportFeedback(
+  prefix: string,
+  result: ArticleDiagramEmbeddingResult,
+  preparedArticleImages: PreparedArticleImages,
+): string {
+  let feedback = prefix;
   if (result.failedDiagramCount > 0) {
-    return `${prefix}；${result.failedDiagramCount} 个图表渲染失败，已保留代码`;
+    feedback += `；${result.failedDiagramCount} 个图表渲染失败，已保留代码`;
+  } else if (result.embeddedDiagramCount > 0) {
+    feedback += `，${result.embeddedDiagramCount} 个图表已转成图片`;
   }
 
-  if (result.embeddedDiagramCount > 0) {
-    return `${prefix}，${result.embeddedDiagramCount} 个图表已转成图片`;
+  if (preparedArticleImages.embeddedImageCount > 0) {
+    feedback += `，${preparedArticleImages.embeddedImageCount} 张本地配图已显示`;
+  } else if (preparedArticleImages.resolution) {
+    feedback += `；检测到 ${preparedArticleImages.resolution.totalImageCount} 张本地配图`;
   }
 
-  return prefix;
+  return feedback;
 }
 
 function activateTheme(themeId: string): void {
@@ -780,6 +1138,47 @@ function activateTheme(themeId: string): void {
   normalizeDecorationTarget(requireSelectedTheme(dataset.themes, themeId));
   persistSelectedTheme(themeId);
   writeThemeToUrl(themeId);
+}
+
+function renderArticleImageNotice(): string {
+  const articleImages = state.articleImages;
+  if (!articleImages) {
+    return '';
+  }
+
+  if (articleImages.phase === 'resolving') {
+    return `
+      <section class="articleImageNotice isResolving" role="status" aria-live="polite">
+        <i class="ti ti-loader-2" aria-hidden="true"></i>
+        <div>
+          <strong>正在读取文章配图</strong>
+          <span>只处理 Markdown 引用的 ${articleImages.unresolvedImages.length} 个本地文件，图片不会上传。</span>
+        </div>
+      </section>
+    `;
+  }
+
+  const isPartial = articleImages.phase === 'partial';
+  const title = isPartial
+    ? `已显示 ${articleImages.embeddedImageCount}/${articleImages.totalImageCount} 张本地配图`
+    : `检测到 ${articleImages.totalImageCount} 张本地配图`;
+  const summary = isPartial
+    ? `还有 ${articleImages.unresolvedImages.length} 张未找到，可以重新选择文章所在文件夹。`
+    : '允许读取文章附件后即可完整预览，图片只在当前浏览器处理。';
+
+  return `
+    <section class="articleImageNotice" role="status">
+      <i class="ti ti-photo-search" aria-hidden="true"></i>
+      <div>
+        <strong>${title}</strong>
+        <span>${summary}</span>
+      </div>
+      <button type="button" data-resolve-article-images>
+        <i class="ti ti-folder-open" aria-hidden="true"></i>
+        <span>${isPartial ? '重新选择' : '显示配图'}</span>
+      </button>
+    </section>
+  `;
 }
 
 function renderPreviewRevealOverlay(): string {
@@ -827,7 +1226,11 @@ function refreshArticlePreview(): void {
 
   rememberPreviewReadingPosition();
   const selectedTheme = requireSelectedTheme(dataset.themes, state.selectedThemeId);
-  const editedTheme = applyThemeStyleOverrides(selectedTheme, buildPreviewOverrides(state.editor));
+  const editedTheme = applyThemeStyleOverrides(
+    selectedTheme,
+    buildPreviewOverrides(state.editor),
+    state.editor.decorationPreferences,
+  );
   previewBoard.innerHTML = renderPreview(editedTheme);
   restorePreviewReadingPosition();
 }
@@ -1441,6 +1844,14 @@ function renderDecorationEditor(theme: ThemeDefinition): string {
         )
         .join('')}
     </div>
+    ${
+      activeRule?.ruleKey === 'section_divider'
+        ? `<section class="settingCard decorationEnable">
+            <strong>显示章节分隔符</strong>
+            ${renderToggleControl('', 'decoration-settings', 'sectionDividerEnabled', state.editor.decorationPreferences.sectionDividerEnabled)}
+          </section>`
+        : ''
+    }
     <section class="decorationPreview">
       <span>预览效果</span>
       ${preview || '<p>当前装饰无模板预览</p>'}
@@ -1524,7 +1935,11 @@ function enterWechatCopyFlow(): void {
 
 async function copyCurrentArticleHtml(): Promise<void> {
   const selectedTheme = requireSelectedTheme(dataset.themes, state.selectedThemeId);
-  const editedTheme = applyThemeStyleOverrides(selectedTheme, buildPreviewOverrides(state.editor));
+  const editedTheme = applyThemeStyleOverrides(
+    selectedTheme,
+    buildPreviewOverrides(state.editor),
+    state.editor.decorationPreferences,
+  );
   const html = renderThemeMarkdown({
     markdown: state.article.markdown,
     theme: editedTheme,
@@ -1912,6 +2327,11 @@ function updateStyleControl(control: HTMLInputElement | HTMLSelectElement): void
     return;
   }
 
+  if (scope === 'decoration-settings') {
+    updateDecorationPreference(styleKey, value);
+    return;
+  }
+
   if (scope.startsWith('decoration.')) {
     const componentName = scope.slice('decoration.'.length);
     state.editor.overrides.decorations[componentName] = {
@@ -1947,6 +2367,12 @@ function updateBoardSetting(styleKey: string, value: string): void {
 
   if (styleKey === 'size' || styleKey === 'opacity') {
     state.editor.board[styleKey] = Number.parseFloat(value);
+  }
+}
+
+function updateDecorationPreference(styleKey: string, value: string): void {
+  if (styleKey === 'sectionDividerEnabled') {
+    state.editor.decorationPreferences.sectionDividerEnabled = value === 'true';
   }
 }
 
@@ -2160,7 +2586,7 @@ function decorationRuleLabel(ruleKey: string): string {
     h3: '三级标题',
     blockquote: '引用块',
     h2_content: '二级标题内容',
-    section_divider: '章节分隔线',
+    section_divider: '章节分隔符',
   };
   return labels[ruleKey] ?? ruleKey;
 }

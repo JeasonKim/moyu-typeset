@@ -545,7 +545,7 @@ textarea:focus-visible {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: 60px minmax(0, 1fr);
+  grid-template-rows: 60px auto minmax(0, 1fr);
   position: relative;
   overflow: hidden;
 }
@@ -627,6 +627,81 @@ textarea:focus-visible {
 
 .previewSwitch button.active i {
   color: var(--accent);
+}
+
+.articleImageNoticeSlot:empty {
+  display: none;
+}
+
+.articleImageNotice {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 16px;
+  color: #35410f;
+  border-bottom: 1px solid rgba(124, 145, 38, 0.2);
+  background: #f5f8e9;
+}
+
+.articleImageNotice > i {
+  font-size: 20px;
+}
+
+.articleImageNotice > div {
+  min-width: 0;
+}
+
+.articleImageNotice strong,
+.articleImageNotice span {
+  display: block;
+}
+
+.articleImageNotice strong {
+  font-size: var(--text-ui);
+  line-height: 1.4;
+}
+
+.articleImageNotice > div > span {
+  margin-top: 2px;
+  color: #667142;
+  font-size: var(--text-caption);
+  line-height: 1.45;
+}
+
+.articleImageNotice button {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 11px;
+  color: #283008;
+  border: 1px solid rgba(75, 91, 18, 0.28);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  font-size: var(--text-caption);
+  font-weight: 700;
+}
+
+.articleImageNotice button:hover {
+  border-color: rgba(75, 91, 18, 0.46);
+  background: #fff;
+}
+
+.articleImageNotice.isResolving {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.articleImageNotice.isResolving > i {
+  animation: articleImageNoticeSpin 800ms linear infinite;
+}
+
+@keyframes articleImageNoticeSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .stageCanvas {
@@ -1190,9 +1265,16 @@ textarea:focus-visible {
   line-height: 1.6;
 }
 
-.boardEnable {
+.boardEnable,
+.decorationEnable {
   grid-template-columns: 1fr auto;
   align-items: center;
+}
+
+.decorationEnable > strong {
+  color: var(--ink-secondary);
+  font-size: var(--text-caption);
+  font-weight: 600;
 }
 
 .boardPresetGrid {
@@ -1885,6 +1967,23 @@ textarea:focus-visible {
   .rightInspector,
   .stageHeader {
     display: none;
+  }
+
+  .articleImageNoticeSlot {
+    position: sticky;
+    top: 58px;
+    z-index: 32;
+  }
+
+  .articleImageNotice {
+    grid-template-columns: auto minmax(0, 1fr);
+    padding: 10px 14px;
+  }
+
+  .articleImageNotice button {
+    grid-column: 2;
+    justify-self: start;
+    margin-top: 2px;
   }
 
   .editorStage {
