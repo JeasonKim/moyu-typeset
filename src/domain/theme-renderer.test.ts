@@ -72,6 +72,29 @@ describe('renderThemeMarkdown', () => {
     expect(result.html).toContain('<ul style="padding-left: 0">');
   });
 
+  it('omits a source heading sequence when the theme already renders an automatic number', () => {
+    const result = renderThemeMarkdown({
+      markdown: '# **（一）主题决定视觉语气**',
+      theme: decoratedTheme,
+    });
+
+    expect(result.html).toContain('data-title="01"');
+    expect(result.html).toContain('>主题决定视觉语气</strong>');
+    expect(result.html).not.toContain('（一）');
+  });
+
+  it('keeps a source heading sequence when the theme does not render an automatic number', () => {
+    const themeWithoutAutomaticNumber = structuredClone(decoratedTheme);
+    themeWithoutAutomaticNumber.config!.rules!.h1!.auto_number = false;
+
+    const result = renderThemeMarkdown({
+      markdown: '# 一、主题决定视觉语气',
+      theme: themeWithoutAutomaticNumber,
+    });
+
+    expect(result.html).toContain('一、主题决定视觉语气');
+  });
+
   it('silently skips a section divider that the user has disabled', () => {
     const themeWithoutSectionDivider = structuredClone(decoratedTheme);
     if (!themeWithoutSectionDivider.config?.components?.divider) {
@@ -193,6 +216,21 @@ describe('renderThemeMarkdown', () => {
     expect(result.html).toContain('data-code-language="JSON"');
     expect(result.html).toContain('<span');
     expect(result.html).toContain('&quot;name&quot;');
+  });
+
+  it('marks code on dark theme surfaces so highlighted tokens use the dark-surface palette', () => {
+    const darkCodeTheme = structuredClone(decoratedTheme);
+    darkCodeTheme.config!.block!.code_pre = {
+      color: '#f7f2e8',
+      'background-color': '#2a2321',
+    };
+
+    const result = renderThemeMarkdown({
+      markdown: '```json\n{"name":"墨鱼","ready":true}\n```',
+      theme: darkCodeTheme,
+    });
+
+    expect(result.html).toContain('data-code-tone="dark"');
   });
 
   it('adds stable reading anchors only to preview output when requested', () => {

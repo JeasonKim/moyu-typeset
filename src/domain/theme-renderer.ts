@@ -1,5 +1,9 @@
 import { marked, type Token, type Tokens } from 'marked';
-import { highlightArticleCode } from '../infrastructure/article-code-highlighter';
+import {
+  highlightArticleCode,
+  type ArticleCodeTone,
+} from '../infrastructure/article-code-highlighter';
+import { omitRedundantHeadingSequence } from './heading-sequence';
 import type { StyleMap, ThemeComponent, ThemeConfig, ThemeDefinition } from './theme-types';
 
 export interface RenderThemeMarkdownInput {
@@ -107,8 +111,13 @@ function renderBlockToken(token: Token, context: RenderContext): string {
 
 function renderHeading(token: Extract<Token, { type: 'heading' }>, context: RenderContext): string {
   const key = `h${token.depth}`;
-  const inlineHtml = renderInlineTokens(token.tokens ?? [], context);
   const rule = context.config.rules?.[key];
+
+  // 主题已经生成章节编号时，移除文案自带的编号，避免预览和公众号草稿出现双序号。
+  const headingTokens = rule?.auto_number
+    ? omitHeadingSequenceFromInlineTokens(token.tokens ?? [])
+    : (token.tokens ?? []);
+  const inlineHtml = renderInlineTokens(headingTokens, context);
   let headingHtml: string;
 
   if (rule?.replace_original && rule.decoration) {
@@ -133,6 +142,82 @@ function renderHeading(token: Extract<Token, { type: 'heading' }>, context: Rend
 
   headingHtml = `<${key} style="${styleToAttribute(context.config.block?.[key])}" data-heading="true">${inlineHtml}</${key}>`;
   return `${headingHtml}${renderInsertedDecorationAfter(key, context)}`;
+}
+
+interface InlineTokenSequenceOmission {
+  tokens: Token[];
+  remainingCharacters: number;
+}
+
+interface InlineTokenOmission {
+  token: Token | null;
+  remainingCharacters: number;
+}
+
+function omitHeadingSequenceFromInlineTokens(tokens: Token[]): Token[] {
+  const visibleLabel = inlineTokenPlainText(tokens);
+  const omission = omitRedundantHeadingSequence(visibleLabel);
+  if (omission.omittedCharacterCount === 0) {
+    return tokens;
+  }
+
+  return omitLeadingInlineCharacters(tokens, omission.omittedCharacterCount).tokens;
+}
+
+function inlineTokenPlainText(tokens: Token[]): string {
+  return tokens
+    .map((token) => {
+      if ('tokens' in token && Array.isArray(token.tokens)) {
+        return inlineTokenPlainText(token.tokens);
+      }
+      if ('text' in token && typeof token.text === 'string') {
+        return token.text;
+      }
+      return '';
+    })
+    .join('');
+}
+
+function omitLeadingInlineCharacters(tokens: Token[], characterCount: number): InlineTokenSequenceOmission {
+  let remainingCharacters = characterCount;
+  const remainingTokens: Token[] = [];
+
+  for (const token of tokens) {
+    const omission = omitLeadingCharactersFromToken(token, remainingCharacters);
+    remainingCharacters = omission.remainingCharacters;
+    if (omission.token) {
+      remainingTokens.push(omission.token);
+    }
+  }
+
+  return { tokens: remainingTokens, remainingCharacters };
+}
+
+function omitLeadingCharactersFromToken(token: Token, characterCount: number): InlineTokenOmission {
+  if (characterCount === 0) {
+    return { token, remainingCharacters: 0 };
+  }
+
+  if ('tokens' in token && Array.isArray(token.tokens)) {
+    const nestedOmission = omitLeadingInlineCharacters(token.tokens, characterCount);
+    return {
+      token: nestedOmission.tokens.length > 0 ? ({ ...token, tokens: nestedOmission.tokens } as Token) : null,
+      remainingCharacters: nestedOmission.remainingCharacters,
+    };
+  }
+
+  if (!('text' in token) || typeof token.text !== 'string') {
+    return { token, remainingCharacters: characterCount };
+  }
+
+  if (token.text.length <= characterCount) {
+    return { token: null, remainingCharacters: characterCount - token.text.length };
+  }
+
+  return {
+    token: { ...token, text: token.text.slice(characterCount) } as Token,
+    remainingCharacters: 0,
+  };
 }
 
 function renderParagraph(token: Extract<Token, { type: 'paragraph' }>, context: RenderContext): string {
@@ -231,6 +316,7 @@ function renderTaskMarker(checked: boolean): string {
 }
 
 function renderTable(token: Tokens.Table, context: RenderContext): string {
+  const minimumTableWidth = `${token.header.length * 144}px`;
   const header = token.header
     .map((cell) => renderTableCell('th', cell, context))
     .join('');
@@ -242,10 +328,14 @@ function renderTable(token: Tokens.Table, context: RenderContext): string {
           .join('')}</tr>`,
     )
     .join('');
+  const tableStyle = styleToAttribute({
+    width: '100%',
+    ...context.config.block?.table,
+    'min-width': minimumTableWidth,
+    'table-layout': 'auto',
+  });
 
-  return `<section data-table-scroll="true" style="max-width: 100%; margin: 1.25em 0; overflow-x: auto"><table style="${styleToAttribute(
-    context.config.block?.table,
-  )}"><thead style="${styleToAttribute(context.config.block?.thead)}"><tr style="${styleToAttribute(
+  return `<section data-table-scroll="true" style="display: block; width: 100%; max-width: 100%; margin: 1.25em 0; overflow-x: auto; -webkit-overflow-scrolling: touch"><table style="${tableStyle}"><thead style="${styleToAttribute(context.config.block?.thead)}"><tr style="${styleToAttribute(
     context.config.block?.tr,
   )}">${header}</tr></thead><tbody>${rows}</tbody></table></section>`;
 }
@@ -255,14 +345,28 @@ function renderTableCell(tag: TableCellTag, cell: Tokens.TableCell, context: Ren
   const cellStyle = styleToAttribute({
     ...context.config.block?.[tag],
     ...alignmentStyle,
+    'white-space': 'nowrap',
   });
   return `<${tag} style="${cellStyle}">${renderInlineTokens(cell.tokens ?? [], context)}</${tag}>`;
 }
 
 function renderCodeBlock(token: Extract<Token, { type: 'code' }>, context: RenderContext): string {
-  const highlightedCode = highlightArticleCode({ code: token.text, language: token.lang });
+  const codeTone = resolveCodeHighlightTone(context.config.block?.code_pre);
+  const highlightedCode = highlightArticleCode({ code: token.text, language: token.lang, tone: codeTone });
+  const languageLabelColor = codeTone === 'dark' ? '#c8c3b9' : '#6f7471';
+  const languageLabelStyle = styleToAttribute({
+    display: 'block',
+    margin: '0 0 0.75em',
+    color: languageLabelColor,
+    'font-family': 'ui-sans-serif, sans-serif',
+    'font-size': '11px',
+    'font-weight': '600',
+    'letter-spacing': '0.08em',
+    'line-height': '1',
+    ...context.config.block?.code_label,
+  });
   const languageLabel = highlightedCode.languageLabel
-    ? `<span aria-hidden="true" style="display: block; margin: 0 0 0.75em; color: #7b7f7c; font-family: ui-sans-serif, sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; line-height: 1">${escapeHtml(
+    ? `<span aria-hidden="true" style="${languageLabelStyle}">${escapeHtml(
         highlightedCode.languageLabel,
       )}</span>`
     : '';
@@ -284,7 +388,28 @@ function renderCodeBlock(token: Extract<Token, { type: 'code' }>, context: Rende
     ...context.config.block?.code,
   });
 
-  return `<pre data-code-language="${escapeAttribute(highlightedCode.languageLabel)}" style="${preStyle}">${languageLabel}<code style="${codeStyle}">${highlightedCode.html}</code></pre>`;
+  return `<pre data-code-language="${escapeAttribute(highlightedCode.languageLabel)}" data-code-tone="${codeTone}" style="${preStyle}">${languageLabel}<code style="${codeStyle}">${highlightedCode.html}</code></pre>`;
+}
+
+function resolveCodeHighlightTone(codeBlockStyle: StyleMap | undefined): ArticleCodeTone {
+  const foregroundColor = codeBlockStyle?.color;
+  if (typeof foregroundColor !== 'string') {
+    return 'light';
+  }
+
+  const normalizedColor = foregroundColor.trim();
+  const match = normalizedColor.match(/^#([\da-f]{3}|[\da-f]{6})$/i);
+  if (!match) {
+    return 'light';
+  }
+
+  const hex = match[1].length === 3 ? [...match[1]].map((channel) => channel.repeat(2)).join('') : match[1];
+  const red = Number.parseInt(hex.slice(0, 2), 16);
+  const green = Number.parseInt(hex.slice(2, 4), 16);
+  const blue = Number.parseInt(hex.slice(4, 6), 16);
+  const perceivedBrightness = (red * 299 + green * 587 + blue * 114) / 1000;
+
+  return perceivedBrightness >= 170 ? 'dark' : 'light';
 }
 
 function renderHtmlBlockToken(token: Token, context: RenderContext): string {

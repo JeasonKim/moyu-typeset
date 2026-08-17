@@ -27,6 +27,7 @@ import {
 } from './domain/article-document';
 import { listEditableDecorationColorFields } from './domain/decoration-style-fields';
 import {
+  createEmptyStyleOverrides,
   createPristineEditorState,
   focusStyleEditorOnBodyText,
   resetStyleEditorToOriginal,
@@ -161,6 +162,25 @@ const boardPresets: Array<{ id: BoardPattern; label: string }> = [
 ];
 
 const dataset = themesDataset as unknown as ThemesDataset;
+const themeTemplatePreviewMarkdown = [
+  '# 主题示例',
+  '',
+  '这是 **主题效果** 的快速预览。',
+  '',
+  '## 标题样式',
+  '',
+  '正文段落展示基本文字效果，包含 *斜体* 和 `代码`。',
+  '',
+  '> 引用块展示效果',
+  '',
+  '### 列表效果',
+  '',
+  '- 项目一',
+  '- 项目二',
+  '',
+  '**粗体文字** 展示效果。',
+].join('\n');
+const themeTemplatePreviewCache = new Map<string, string>();
 const initialArticle: ArticleDocument = {
   fileName: generatedArticleStats.sourcePath.split(/[\\/]/).pop() || 'demo.md',
   markdown: generatedArticleMarkdown,
@@ -177,7 +197,7 @@ const state = {
   article: initialArticle,
   templateCategoryId: 'all' as TemplateCategoryId,
   themeQuery: '',
-  previewDevice: 'desktop' as PreviewDevice,
+  previewDevice: 'mobile' as PreviewDevice,
   templateListScrollTop: 0,
   previewScrollTop: 0,
   previewScrollLeft: 0,
@@ -341,11 +361,11 @@ function renderApp(): void {
               </div>
             </div>
             <div class="previewSwitch" aria-label="预览尺寸">
-              <button type="button" class="${state.previewDevice === 'desktop' ? 'active' : ''}" data-preview-device="desktop">
-                <i class="ti ti-device-desktop"></i><span>桌面预览</span>
-              </button>
               <button type="button" class="${state.previewDevice === 'mobile' ? 'active' : ''}" data-preview-device="mobile">
                 <i class="ti ti-device-mobile"></i><span>手机预览</span>
+              </button>
+              <button type="button" class="${state.previewDevice === 'desktop' ? 'active' : ''}" data-preview-device="desktop">
+                <i class="ti ti-device-desktop"></i><span>桌面预览</span>
               </button>
             </div>
           </header>
@@ -1463,7 +1483,7 @@ function renderThemeTemplateCard(theme: ThemeDefinition, selectedTheme: ThemeDef
   return `
     <button class="templateCard${isSelected ? ' isSelected' : ''}" type="button" data-theme-id="${escapeAttribute(themeId)}">
       <span class="templateThumb" aria-hidden="true">
-        <span class="templateThumbInner">${theme.section_html ?? ''}</span>
+        <span class="templateThumbInner">${renderThemeTemplatePreview(theme)}</span>
       </span>
       <span class="templateInfo">
         <strong>${escapeHtml(display.name)}</strong>
@@ -1471,6 +1491,21 @@ function renderThemeTemplateCard(theme: ThemeDefinition, selectedTheme: ThemeDef
       </span>
     </button>
   `;
+}
+
+function renderThemeTemplatePreview(theme: ThemeDefinition): string {
+  const themeId = theme.value || theme.id;
+  const cachedPreview = themeTemplatePreviewCache.get(themeId);
+  if (cachedPreview) {
+    return cachedPreview;
+  }
+
+  const previewTheme = applyThemeStyleOverrides(theme, createEmptyStyleOverrides(), {
+    sectionDividerEnabled: false,
+  });
+  const preview = renderThemeMarkdown({ markdown: themeTemplatePreviewMarkdown, theme: previewTheme }).html;
+  themeTemplatePreviewCache.set(themeId, preview);
+  return preview;
 }
 
 function renderMobileThemeDock(selectedTheme: ThemeDefinition): string {

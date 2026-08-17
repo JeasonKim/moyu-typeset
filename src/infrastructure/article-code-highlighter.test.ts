@@ -21,6 +21,15 @@ describe('highlightArticleCode', () => {
     expect(result.languageLabel).toBe('Bash');
   });
 
+  it('uses a dedicated readable palette for code placed on dark theme surfaces', () => {
+    const code = '{"name":"墨鱼","ready":true}';
+    const lightSurface = highlightArticleCode({ language: 'json', code, tone: 'light' });
+    const darkSurface = highlightArticleCode({ language: 'json', code, tone: 'dark' });
+
+    expect(darkSurface.highlighted).toBe(true);
+    expect(darkSurface.html).not.toBe(lightSurface.html);
+  });
+
   it('keeps unknown and unlabeled code escaped without unreliable automatic detection', () => {
     const unknown = highlightArticleCode({ language: 'custom-dsl', code: '<step ready="true">' });
     const unlabeled = highlightArticleCode({ code: '<plain>' });
