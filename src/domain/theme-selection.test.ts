@@ -1,10 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import { selectPreviewTheme } from './theme-selection';
-import type { ThemeDefinition } from './theme-types';
+import type { ThemeDefinition, ThemePalette } from './theme-types';
+
+const testPalette: ThemePalette = {
+  colorFamilies: ['monochrome'],
+  appearance: 'light',
+  primary: '#333333',
+  secondary: '#BBBBBB',
+};
 
 const themes: ThemeDefinition[] = [
-  { id: 'default', label: '默认主题', value: 'default' },
-  { id: 'z-template', label: 'Z 世代', value: 'z-template' },
+  { id: 'default', label: '默认主题', value: 'default', palette: testPalette },
+  { id: 'z-template', label: 'Z 世代', value: 'z-template', palette: testPalette },
 ];
 
 describe('selectPreviewTheme', () => {

@@ -10,7 +10,7 @@
 
 - **先服务内容**：正文长时间阅读不吃力，标题层级容易辨认。
 - **有完整语气**：字体、颜色、留白、边框和装饰来自同一套视觉逻辑。
-- **说明适用场景**：让使用者能判断它适合教程、品牌故事，还是强视觉营销内容。
+- **阅读氛围清楚**：主题名称、主次色和实际预览能够表达统一的视觉气质。
 - **兼顾公众号限制**：复制到公众号后仍然稳定，不依赖外部 CSS、脚本或交互状态。
 - **尊重原创**：可以研究优秀作品，但请避免直接复制他人的独有版式、素材或品牌资产。
 
@@ -41,8 +41,12 @@ flowchart TD
   "id": "quiet-editorial",
   "value": "quiet-editorial",
   "label": "静谧书刊",
-  "description": "低饱和纸张色与克制标题，适合书评、随笔和长篇人文内容。",
-  "primary_color": "#5F665E",
+  "palette": {
+    "colorFamilies": ["warm"],
+    "appearance": "light",
+    "primary": "#5F665E",
+    "secondary": "#B8A990"
+  },
   "author": "your-github-name",
   "type": "unified",
   "config": {
@@ -101,11 +105,12 @@ flowchart TD
 | --- | --- |
 | `id` / `value` | 稳定且唯一的主题标识。新增后不要随意修改，否则已有链接和选择记录会失效。 |
 | `label` | 面向用户的中文名称，直接表达视觉气质。 |
-| `description` | 说明风格、内容类型和适用场景，不堆砌抽象形容词。 |
-| `primary_color` | 主题卡片和界面提示使用的代表色。 |
+| `palette.colorFamilies` | 可选 `monochrome`、`warm`、`cool`、`colorful`，可以同时声明多个真实存在的色彩倾向。 |
+| `palette.appearance` | 文章阅读底色的明暗模式，只能是 `light` 或 `dark`。 |
+| `palette.primary` / `secondary` | 主题卡片展示的主次强调色。 |
 | `author` | GitHub 用户名或希望展示的作者名。 |
 
-`section_html` 是旧主题的兼容回退，新主题应以 `config` 为唯一事实源，不需要手写一份重复的静态预览。
+主题卡的背景色和正文色直接解析 `config.base` 与 `config.block.container`，不在 `palette` 中重复保存。`palette.appearance` 必须与实际文章背景明暗一致。`section_html` 是兼容回退，新主题应以 `config` 为唯一事实源，不需要手写一份重复的静态预览。
 
 ### `base`：建立整体基调
 
@@ -150,7 +155,7 @@ flowchart TD
    ```
 
 2. 在 [`src/data/themes.json`](./src/data/themes.json) 中复制最接近的主题，先修改身份字段，再从 `base`、`block`、`inline` 到装饰组件逐层调整。
-3. 在 [`src/domain/template-categories.ts`](./src/domain/template-categories.ts) 中，把新主题 ID 登记到一至两个最适合的内容分类。不要为了增加曝光把它放进所有分类。
+3. 根据实际文章底色和强调色填写 `palette.colorFamilies`、`palette.appearance`、`palette.primary` 与 `palette.secondary`。
 4. 启动本地工作台，用完整的 `demo.md` 检查所有内容块：
 
    ```bash
@@ -180,13 +185,13 @@ npm run build
 
 提交 Pull Request 前，请确认：
 
-- [ ] 主题名称和描述能够让用户判断适用场景。
+- [ ] 主题名称和主次色能够准确表达视觉气质。
 - [ ] `id` 与 `value` 唯一且稳定。
 - [ ] 正文、标题、引用、列表、表格、代码和图片都有合理样式。
 - [ ] 桌面与手机预览没有溢出或遮挡。
 - [ ] 已在微信公众号草稿箱中验证复制结果。
 - [ ] 没有提交 `dist`、`.wrangler`、环境变量、Token 或本地调试文件。
-- [ ] 新增主题已经登记到合适的内容分类。
+- [ ] 色彩倾向和明暗模式与实际文章容器一致。
 - [ ] 测试和生产构建全部通过。
 
 Pull Request 中请附上主题定位、适用场景，以及至少一张完整文章截图。说明你做了哪些关键视觉判断，会比只罗列颜色值更有助于评审。

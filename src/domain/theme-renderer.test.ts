@@ -1,11 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderThemeMarkdown, styleToAttribute } from './theme-renderer';
-import type { ThemeDefinition } from './theme-types';
+import type { ThemeDefinition, ThemePalette } from './theme-types';
+
+const testPalette: ThemePalette = {
+  colorFamilies: ['monochrome'],
+  appearance: 'light',
+  primary: '#333333',
+  secondary: '#BBBBBB',
+};
 
 const decoratedTheme: ThemeDefinition = {
   id: 'decorated',
   label: '装饰主题',
   value: 'decorated',
+  palette: testPalette,
   section_html: '<section>sample</section>',
   config: {
     base: { color: '#111111' },
@@ -122,6 +130,7 @@ describe('renderThemeMarkdown', () => {
         id: 'legacy',
         label: '旧主题',
         value: 'legacy',
+        palette: testPalette,
         section_html: '<section>legacy</section>',
       },
     });

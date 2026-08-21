@@ -6,7 +6,14 @@ import {
   shadowStyleForLevel,
 } from './style-overrides';
 import type { ThemeStyleOverrides } from './style-editor-types';
-import type { ThemeDefinition } from './theme-types';
+import type { ThemeDefinition, ThemePalette } from './theme-types';
+
+const testPalette: ThemePalette = {
+  colorFamilies: ['monochrome'],
+  appearance: 'light',
+  primary: '#333333',
+  secondary: '#BBBBBB',
+};
 
 const baseOverrides: ThemeStyleOverrides = {
   text: {
@@ -52,6 +59,7 @@ const theme: ThemeDefinition = {
   id: 'theme-a',
   label: '主题 A',
   value: 'theme-a',
+  palette: testPalette,
   config: {
     base: {
       color: '#111111',

@@ -1,13 +1,19 @@
 import './styles.css';
 import '@tabler/icons-webfont/dist/tabler-icons.min.css';
 import themesDataset from './data/themes.json';
-import { generatedArticleMarkdown, generatedArticleStats } from './data/generated-article';
+import {
+  generatedArticleImages,
+  generatedArticleMarkdown,
+  generatedArticleSourceMarkdown,
+  generatedArticleStats,
+} from './data/generated-article';
 import {
   embedArticleDiagramsAsImages,
   type ArticleDiagramEmbeddingResult,
 } from './domain/article-diagrams';
 import {
   collectLocalArticleImages,
+  embedKnownArticleImages,
   embedLocalArticleImages,
   type ArticleImageEmbeddingResult,
   type ArticleImageSource,
@@ -21,23 +27,24 @@ import { coordinateArticleRevealTransition } from './domain/article-reveal-trans
 import {
   articleDisplayFileName,
   markdownDocumentFromFile,
-  markdownDocumentFromPaste,
   supportsMarkdownFile,
   type ArticleDocument,
 } from './domain/article-document';
-import { listEditableDecorationColorFields } from './domain/decoration-style-fields';
+import { restoreArticleDraft, serializeArticleDraft } from './domain/article-draft';
+import { decorationFieldLabel, listEditableDecorationColorFields } from './domain/decoration-style-fields';
+import { mapSynchronizedScrollPosition } from './domain/editor-preview-scroll';
+import type { MarkdownEditingCommand, MarkdownEditingSelection } from './domain/markdown-editing';
 import {
-  createEmptyStyleOverrides,
   createPristineEditorState,
   focusStyleEditorOnBodyText,
   resetStyleEditorToOriginal,
 } from './domain/style-editor-state';
 import { styleControlEventNames } from './domain/style-control-events';
 import {
-  filterThemesByCategory,
-  templateCategories,
-  type TemplateCategoryId,
-} from './domain/template-categories';
+  filterThemesByColor,
+  themeColorFilters,
+  type ThemeColorFilterId,
+} from './domain/theme-color-filters';
 import { buildTwitterShareUrl, isWechatBrowser, shareMoyuTypesetThroughSystem } from './domain/site-sharing';
 import { articlePlainTextFromHtml, canCopyWechatRichText, copyWechatArticle } from './domain/wechat-clipboard';
 import { decideWechatCopyEntry } from './domain/wechat-clipboard-consent';
@@ -55,11 +62,17 @@ import {
   type PreviewReadingAnchor,
   type PreviewReadingBlockGeometry,
 } from './domain/preview-reading-anchor';
-import { themeTemplateDisplay } from './domain/theme-display';
 import { coordinateThemeRevealTransition } from './domain/theme-reveal-transition';
 import { filterThemesByQuery } from './domain/theme-search';
 import { selectPreviewTheme } from './domain/theme-selection';
-import type { ThemeDefinition, ThemesDataset } from './domain/theme-types';
+import {
+  applyThemeAppearance,
+  resolveThemeAppearancePreview,
+  selectThemeAppearance,
+  themeAppearanceLabel,
+} from './domain/theme-appearance';
+import { constrainMarkdownPaneWidth, resizeRightMarkdownPane } from './domain/workbench-layout';
+import type { ThemeAppearance, ThemeDefinition, ThemesDataset } from './domain/theme-types';
 import type {
   BoardPattern,
   EditorTab,
@@ -83,12 +96,20 @@ import {
   locateOpenedArticleInSelectedDirectory,
   type DirectoryArticleIdentity,
 } from './infrastructure/browser-article-image-source';
+import {
+  mountBrowserMarkdownEditor,
+  type BrowserMarkdownEditor,
+  type MarkdownEditorScrollMetrics,
+} from './infrastructure/browser-markdown-editor';
 
 type PreviewDevice = 'desktop' | 'mobile';
 type PreviewRevealPhase = 'idle' | 'brand-loading' | 'curtain-opening';
 type PreviewRevealContext = 'theme' | 'article' | null;
 type ToastAction = 'open-wechat-editor';
 type ArticleImageResolutionPhase = 'permission-required' | 'resolving' | 'partial';
+type ArticleDraftSavePhase = 'saved' | 'saving' | 'failed';
+type SynchronizedScrollSource = 'markdown' | 'preview' | null;
+type SettingsPanelView = 'themes' | 'styles';
 
 interface WechatArticleClipboardContent {
   html: string;
@@ -134,6 +155,12 @@ const githubRepositoryUrl = 'https://github.com/JeasonKim/moyu-typeset';
 const publicSiteUrl = 'https://moyu.liaobuqi.ren/';
 const wechatEditorUrl = 'https://mp.weixin.qq.com/';
 const wechatClipboardConsentKey = 'moyu-typeset:wechat-clipboard-consent';
+const articleDraftStorageKey = 'moyu-typeset:article-draft';
+const themeAppearanceStorageKey = 'theme-preview:theme-appearance';
+const desktopSettingsPanelWidth = 256;
+const minimumMarkdownPaneWidth = 320;
+const minimumPreviewPaneWidth = 430;
+const workbenchDividerWidth = 1;
 
 const editorTabs: Array<{ id: EditorTab; label: string; icon: string }> = [
   { id: 'text', label: '文本', icon: 'ti-typography' },
@@ -162,40 +189,41 @@ const boardPresets: Array<{ id: BoardPattern; label: string }> = [
 ];
 
 const dataset = themesDataset as unknown as ThemesDataset;
-const themeTemplatePreviewMarkdown = [
-  '# 主题示例',
-  '',
-  '这是 **主题效果** 的快速预览。',
-  '',
-  '## 标题样式',
-  '',
-  '正文段落展示基本文字效果，包含 *斜体* 和 `代码`。',
-  '',
-  '> 引用块展示效果',
-  '',
-  '### 列表效果',
-  '',
-  '- 项目一',
-  '- 项目二',
-  '',
-  '**粗体文字** 展示效果。',
-].join('\n');
-const themeTemplatePreviewCache = new Map<string, string>();
-const initialArticle: ArticleDocument = {
+const bundledArticle: ArticleDocument = {
   fileName: generatedArticleStats.sourcePath.split(/[\\/]/).pop() || 'demo.md',
-  markdown: generatedArticleMarkdown,
+  markdown: generatedArticleSourceMarkdown,
   source: 'demo',
 };
+const initialArticleRestoration = restoreArticleDraft(readStoredArticleDraft(), bundledArticle);
+if (initialArticleRestoration.status === 'invalid') {
+  console.warn(
+    `[moyu-editor] stored article draft abandoned reason="${initialArticleRestoration.reason}". Falling back to bundled article="${bundledArticle.fileName}".`,
+  );
+}
 const initialThemeSelection = selectPreviewTheme({
   themes: dataset.themes,
   requestedThemeId: new URLSearchParams(window.location.search).get('theme'),
   storedThemeId: readStoredThemeId(),
 });
+const initialThemeAppearance = selectThemeAppearance({
+  requestedAppearance: new URLSearchParams(window.location.search).get('appearance'),
+  storedAppearance: readStoredThemeAppearance(),
+});
 
 const state = {
   selectedThemeId: initialThemeSelection.selectedThemeId,
-  article: initialArticle,
-  templateCategoryId: 'all' as TemplateCategoryId,
+  themeAppearance: initialThemeAppearance,
+  article: initialArticleRestoration.article,
+  previewMarkdown:
+    initialArticleRestoration.status === 'missing'
+      ? generatedArticleMarkdown
+      : prepareBundledArticleImages(initialArticleRestoration.article),
+  articleDraftSavePhase: 'saved' as ArticleDraftSavePhase,
+  settingsPanelView: 'themes' as SettingsPanelView,
+  markdownPaneWidth: initialMarkdownPaneWidth(),
+  markdownSelection: { anchor: 0, head: 0 } as MarkdownEditingSelection,
+  markdownScrollTop: 0,
+  themeColorFilterId: 'all' as ThemeColorFilterId,
   themeQuery: '',
   previewDevice: 'mobile' as PreviewDevice,
   templateListScrollTop: 0,
@@ -203,7 +231,6 @@ const state = {
   previewScrollLeft: 0,
   previewReadingAnchor: null as PreviewReadingAnchor | null,
   previewReadingPositionShouldReset: false,
-  pasteDialogOpen: false,
   supportDialogOpen: false,
   mobileShareDialogOpen: false,
   clipboardConsentDialogOpen: false,
@@ -211,7 +238,10 @@ const state = {
   previewRevealPhase: 'idle' as PreviewRevealPhase,
   previewRevealContext: null as PreviewRevealContext,
   pendingThemeId: null as string | null,
-  articleImages: null as ArticleImageResolutionState | null,
+  articleImages:
+    initialArticleRestoration.article.source === 'demo'
+      ? null
+      : pendingArticleImages(initialArticleRestoration.article.markdown).resolution,
   toast: null as ToastNotice | null,
   editor: readStoredEditorState() ?? createPristineEditorState(firstDecorationTarget(initialThemeSelection.selectedTheme)),
 };
@@ -221,6 +251,11 @@ let previewPositionRestoreFrame: number | undefined;
 let openedArticleIdentity: DirectoryArticleIdentity | null = null;
 let recentArticleImageDirectory: FileSystemDirectoryHandle | null = null;
 let articleImageDirectoryPickerFallbackRequired = false;
+let markdownEditor: BrowserMarkdownEditor | null = null;
+let articleDraftSaveTimer: number | undefined;
+let editedArticlePreparationTimer: number | undefined;
+let synchronizedScrollSource: SynchronizedScrollSource = null;
+let synchronizedScrollFrame: number | undefined;
 
 const appRoot = document.querySelector<HTMLDivElement>('#app');
 if (!appRoot) {
@@ -284,18 +319,21 @@ function concludePreviewReveal(): void {
 function renderApp(): void {
   rememberTemplateListScroll();
   rememberPreviewReadingPosition();
+  rememberMarkdownEditorState();
+  markdownEditor?.destroy();
+  markdownEditor = null;
 
-  const selectedTheme = requireSelectedTheme(dataset.themes, state.selectedThemeId);
-  normalizeDecorationTarget(selectedTheme);
+  const sourceTheme = requireSelectedTheme(dataset.themes, state.selectedThemeId);
+  const selectedTheme = applyThemeAppearance(sourceTheme, state.themeAppearance);
+  normalizeDecorationTarget(sourceTheme);
   const editedTheme = applyThemeStyleOverrides(
     selectedTheme,
     buildPreviewOverrides(state.editor),
     state.editor.decorationPreferences,
   );
   const renderedPreview = renderPreview(editedTheme);
-  const selectedThemeDisplay = themeTemplateDisplay(selectedTheme);
   const visibleTemplateThemes = filterThemesByQuery(
-    filterThemesByCategory(dataset.themes, state.templateCategoryId),
+    filterThemesByColor(dataset.themes, state.themeColorFilterId),
     state.themeQuery,
   );
 
@@ -326,79 +364,90 @@ function renderApp(): void {
             <i class="ti ti-share-3"></i>
           </button>
         </div>
-        <div class="documentChip" title="当前文章">
-          <i class="ti ti-file-text"></i>
-          <span>${escapeHtml(articleDisplayFileName(state.article))}</span>
-          <small>${state.article.source === 'demo' ? '演示文档' : state.article.source === 'file' ? '本地文件' : '临时内容'}</small>
-        </div>
-        <div class="commandActions">
-          <input id="markdownFileInput" class="visuallyHidden" type="file" accept=".md,.markdown,text/markdown">
-          <input id="articleImageDirectoryInput" class="visuallyHidden" type="file" webkitdirectory multiple>
-          <button class="commandButton" type="button" data-open-markdown>
-            <i class="ti ti-file-upload"></i><span>打开 Markdown</span>
-          </button>
-          <button class="commandButton" type="button" data-open-paste-dialog>
-            <i class="ti ti-clipboard-text"></i><span>粘贴 Markdown</span>
-          </button>
+        <div class="siteHeaderSummary" aria-label="站点用途">
+          <strong>公众号 Markdown 排版</strong>
+          <span>本地编辑 · 实时预览</span>
         </div>
         <button class="publishButton" type="button" data-copy-article>
           <i class="ti ti-brand-wechat"></i><span>复制到公众号</span>
         </button>
       </header>
 
-      <section class="workspace">
-        <aside class="leftPanel" aria-label="主题模板">
-          ${renderTemplatePanel(visibleTemplateThemes, selectedTheme)}
+      <section class="workspace${state.settingsPanelView === 'styles' ? ' isStylePanel' : ''}">
+        <aside class="leftPanel" aria-label="主题与样式设置">
+          ${renderSettingsPanelNavigation()}
+          ${
+            state.settingsPanelView === 'themes'
+              ? renderTemplatePanel(visibleTemplateThemes, selectedTheme)
+              : renderStyleEditor(editedTheme)
+          }
         </aside>
 
-        <section class="editorStage">
-          <header class="stageHeader">
-            <div class="documentMeta">
-              <span class="documentDot" style="background: ${escapeAttribute(selectedTheme.primary_color || '#111111')}"></span>
-              <div>
-                <strong>${escapeHtml(selectedThemeDisplay.name)}</strong>
-                <span>${escapeHtml(selectedThemeDisplay.summary)}</span>
+        <section class="editingWorkbench" style="--markdown-pane-width: ${state.markdownPaneWidth}px">
+          <section class="editorStage">
+            <header class="stageHeader">
+              <div class="documentMeta">
+                <span class="documentDot" style="background: ${escapeAttribute(selectedTheme.palette.primary)}"></span>
+                <div>
+                  <span class="stageEyebrow">实时预览 · ${themeAppearanceLabel(state.themeAppearance)}</span>
+                  <strong>${escapeHtml(selectedTheme.label)}</strong>
+                </div>
+              </div>
+              <div class="previewSwitch" aria-label="预览尺寸">
+                <button
+                  type="button"
+                  class="${state.previewDevice === 'mobile' ? 'active' : ''}"
+                  aria-pressed="${state.previewDevice === 'mobile'}"
+                  data-preview-device="mobile"
+                >
+                  <i class="ti ti-device-mobile"></i><span>手机预览</span>
+                </button>
+                <button
+                  type="button"
+                  class="${state.previewDevice === 'desktop' ? 'active' : ''}"
+                  aria-pressed="${state.previewDevice === 'desktop'}"
+                  data-preview-device="desktop"
+                >
+                  <i class="ti ti-device-desktop"></i><span>桌面预览</span>
+                </button>
+              </div>
+            </header>
+
+            <div class="articleImageNoticeSlot">
+              ${renderArticleImageNotice()}
+            </div>
+
+            <div
+              class="stageCanvas ${state.previewDevice === 'mobile' ? 'isMobilePreview' : ''}"
+              data-article-drop-zone
+              ${state.previewRevealPhase !== 'idle' ? 'aria-busy="true"' : ''}
+            >
+              <div class="dropOverlay" aria-hidden="true">
+                <img class="dropMotionMark" src="/moyu-mark-motion.svg" alt="">
+                <strong>松开后开始排版</strong>
+                <span>Markdown 只在当前页面读取</span>
+              </div>
+              <div class="previewBoard">
+                ${renderedPreview}
               </div>
             </div>
-            <div class="previewSwitch" aria-label="预览尺寸">
-              <button type="button" class="${state.previewDevice === 'mobile' ? 'active' : ''}" data-preview-device="mobile">
-                <i class="ti ti-device-mobile"></i><span>手机预览</span>
-              </button>
-              <button type="button" class="${state.previewDevice === 'desktop' ? 'active' : ''}" data-preview-device="desktop">
-                <i class="ti ti-device-desktop"></i><span>桌面预览</span>
-              </button>
-            </div>
-          </header>
-
-          <div class="articleImageNoticeSlot">
-            ${renderArticleImageNotice()}
-          </div>
+            ${renderPreviewRevealOverlay()}
+          </section>
 
           <div
-            class="stageCanvas ${state.previewDevice === 'mobile' ? 'isMobilePreview' : ''}"
-            data-article-drop-zone
-            ${state.previewRevealPhase !== 'idle' ? 'aria-busy="true"' : ''}
-          >
-            <div class="dropOverlay" aria-hidden="true">
-              <img class="dropMotionMark" src="/moyu-mark-motion.svg" alt="">
-              <strong>松开后开始排版</strong>
-              <span>Markdown 只在当前页面读取</span>
-            </div>
-            <div class="previewBoard">
-              ${renderedPreview}
-            </div>
-          </div>
-          ${renderPreviewRevealOverlay()}
+            class="workbenchDivider"
+            role="separator"
+            aria-label="调整预览区和编辑区宽度"
+            aria-orientation="vertical"
+            tabindex="0"
+            data-resize-workbench
+          ><span aria-hidden="true"></span></div>
+          ${renderMarkdownEditorPane()}
         </section>
-
-        <aside class="rightInspector" aria-label="样式设置">
-          ${renderStyleEditor(editedTheme)}
-        </aside>
       </section>
 
       ${renderMobileThemeDock(selectedTheme)}
 
-      ${state.pasteDialogOpen ? renderPasteDialog() : ''}
       ${state.supportDialogOpen ? renderSupportDialog() : ''}
       ${state.mobileShareDialogOpen ? renderMobileShareDialog() : ''}
       ${state.clipboardConsentDialogOpen ? renderClipboardConsentDialog() : ''}
@@ -407,6 +456,7 @@ function renderApp(): void {
   `;
 
   bindEvents();
+  mountMarkdownEditor();
   restoreTemplateListScroll();
   restorePreviewReadingPosition();
   centerSelectedMobileTheme();
@@ -417,6 +467,10 @@ function bindEvents(): void {
   bindSupportEvents();
   bindSharingEvents();
   bindClipboardConsentEvents();
+  bindSettingsPanelEvents();
+  bindMarkdownEditorToolbar();
+  bindWorkbenchResize();
+  bindPreviewScrollSync();
 
   const templateList = app.querySelector<HTMLElement>('.templateList');
   templateList?.addEventListener('scroll', () => {
@@ -447,15 +501,29 @@ function bindEvents(): void {
     });
   });
 
-  app.querySelectorAll<HTMLButtonElement>('[data-template-category]').forEach((button) => {
+  app.querySelectorAll<HTMLButtonElement>('[data-theme-color]').forEach((button) => {
     button.addEventListener('click', () => {
-      const categoryId = button.dataset.templateCategory as TemplateCategoryId | undefined;
-      if (!categoryId || categoryId === state.templateCategoryId) {
+      const colorFilterId = button.dataset.themeColor as ThemeColorFilterId | undefined;
+      if (!colorFilterId || colorFilterId === state.themeColorFilterId) {
         return;
       }
 
-      state.templateCategoryId = categoryId;
+      state.themeColorFilterId = colorFilterId;
       state.templateListScrollTop = 0;
+      renderApp();
+    });
+  });
+
+  app.querySelectorAll<HTMLButtonElement>('[data-theme-appearance]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const appearance = button.dataset.themeAppearance as ThemeAppearance | undefined;
+      if (!appearance || appearance === state.themeAppearance) {
+        return;
+      }
+
+      state.themeAppearance = appearance;
+      persistThemeAppearance(appearance);
+      reflectThemeSelectionInUrl(state.selectedThemeId, appearance);
       renderApp();
     });
   });
@@ -586,6 +654,125 @@ function bindEvents(): void {
   });
 }
 
+function bindSettingsPanelEvents(): void {
+  app.querySelectorAll<HTMLButtonElement>('[data-settings-panel-view]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const settingsPanelView = button.dataset.settingsPanelView as SettingsPanelView | undefined;
+      if (!settingsPanelView || settingsPanelView === state.settingsPanelView) {
+        return;
+      }
+
+      state.settingsPanelView = settingsPanelView;
+      renderApp();
+    });
+  });
+}
+
+function bindMarkdownEditorToolbar(): void {
+  app.querySelectorAll<HTMLButtonElement>('[data-markdown-command]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const command = button.dataset.markdownCommand as MarkdownEditingCommand | undefined;
+      if (command) {
+        markdownEditor?.applyEditingCommand(command);
+      }
+    });
+  });
+
+  app.querySelector<HTMLButtonElement>('[data-markdown-history="undo"]')?.addEventListener('click', () => {
+    markdownEditor?.undoEditing();
+  });
+  app.querySelector<HTMLButtonElement>('[data-markdown-history="redo"]')?.addEventListener('click', () => {
+    markdownEditor?.redoEditing();
+  });
+  app.querySelector<HTMLButtonElement>('[data-restore-bundled-article]')?.addEventListener('click', () => {
+    if (!window.confirm('恢复示例内容？当前自动保存的编辑内容会被替换。')) {
+      return;
+    }
+    restoreBundledArticle();
+  });
+}
+
+function bindWorkbenchResize(): void {
+  const divider = app.querySelector<HTMLElement>('[data-resize-workbench]');
+  const workbench = app.querySelector<HTMLElement>('.editingWorkbench');
+  if (!divider || !workbench) {
+    return;
+  }
+
+  divider.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    const originX = event.clientX;
+    const originWidth = app.querySelector<HTMLElement>('.markdownEditorPane')?.getBoundingClientRect().width ?? state.markdownPaneWidth;
+    divider.setPointerCapture(event.pointerId);
+    workbench.classList.add('isResizing');
+
+    const resizeMarkdownPane = (moveEvent: PointerEvent) => {
+      state.markdownPaneWidth = constrainMarkdownPaneWidth({
+        workbenchWidth: workbench.clientWidth,
+        requestedWidth: resizeRightMarkdownPane({
+          originPaneWidth: originWidth,
+          originPointerX: originX,
+          currentPointerX: moveEvent.clientX,
+        }),
+        dividerWidth: workbenchDividerWidth,
+        minimumMarkdownWidth: minimumMarkdownPaneWidth,
+        minimumPreviewWidth: minimumPreviewPaneWidth,
+      });
+      workbench.style.setProperty('--markdown-pane-width', `${state.markdownPaneWidth}px`);
+    };
+
+    const concludeResize = () => {
+      workbench.classList.remove('isResizing');
+      window.removeEventListener('pointermove', resizeMarkdownPane);
+      window.removeEventListener('pointerup', concludeResize);
+    };
+
+    window.addEventListener('pointermove', resizeMarkdownPane);
+    window.addEventListener('pointerup', concludeResize, { once: true });
+  });
+
+  divider.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+      return;
+    }
+    event.preventDefault();
+    const direction = event.key === 'ArrowLeft' ? 1 : -1;
+    state.markdownPaneWidth = constrainMarkdownPaneWidth({
+      workbenchWidth: workbench.clientWidth,
+      requestedWidth: state.markdownPaneWidth + direction * 24,
+      dividerWidth: workbenchDividerWidth,
+      minimumMarkdownWidth: minimumMarkdownPaneWidth,
+      minimumPreviewWidth: minimumPreviewPaneWidth,
+    });
+    workbench.style.setProperty('--markdown-pane-width', `${state.markdownPaneWidth}px`);
+  });
+}
+
+function bindPreviewScrollSync(): void {
+  const previewSurface = app.querySelector<HTMLElement>('.stageCanvas');
+  previewSurface?.addEventListener(
+    'scroll',
+    () => {
+      if (synchronizedScrollSource === 'markdown' || !markdownEditor) {
+        return;
+      }
+      synchronizedScrollSource = 'preview';
+      const editorMetrics = markdownEditor.scrollMetrics();
+      markdownEditor.scrollTo(
+        mapSynchronizedScrollPosition({
+          sourceScrollTop: previewSurface.scrollTop,
+          sourceScrollHeight: previewSurface.scrollHeight,
+          sourceViewportHeight: previewSurface.clientHeight,
+          targetScrollHeight: editorMetrics.scrollHeight,
+          targetViewportHeight: editorMetrics.viewportHeight,
+        }),
+      );
+      releaseSynchronizedScroll();
+    },
+    { passive: true },
+  );
+}
+
 function bindArticleSourceEvents(): void {
   const fileInput = app.querySelector<HTMLInputElement>('#markdownFileInput');
   const articleImageDirectoryInput = app.querySelector<HTMLInputElement>('#articleImageDirectoryInput');
@@ -610,28 +797,6 @@ function bindArticleSourceEvents(): void {
     if (files.length > 0) {
       void revealArticleImagesFromSelectedDirectory(files);
     }
-  });
-
-  app.querySelector<HTMLButtonElement>('[data-open-paste-dialog]')?.addEventListener('click', () => {
-    dismissToast();
-    state.pasteDialogOpen = true;
-    renderApp();
-    app.querySelector<HTMLTextAreaElement>('#pastedMarkdown')?.focus();
-  });
-  app.querySelectorAll<HTMLElement>('[data-close-paste-dialog]').forEach((control) => {
-    control.addEventListener('click', () => {
-      state.pasteDialogOpen = false;
-      renderApp();
-    });
-  });
-  app.querySelector<HTMLButtonElement>('[data-preview-pasted-markdown]')?.addEventListener('click', () => {
-    const markdown = app.querySelector<HTMLTextAreaElement>('#pastedMarkdown')?.value ?? '';
-    if (!markdown.trim()) {
-      showToast('请先粘贴 Markdown 内容');
-      return;
-    }
-
-    void previewPastedMarkdown(markdown);
   });
 
   const dropZone = app.querySelector<HTMLElement>('[data-article-drop-zone]');
@@ -799,8 +964,11 @@ async function previewMarkdownFile(file: File): Promise<void> {
 
     revealOperation.revealArticle(() => {
       openedArticleIdentity = articleIdentity;
-      state.article = markdownDocumentFromFile({ fileName: file.name, markdown: preparedArticleImages.markdown });
+      state.article = markdownDocumentFromFile({ fileName: file.name, markdown });
+      state.previewMarkdown = preparedArticleImages.markdown;
       state.articleImages = preparedArticleImages.resolution;
+      resetMarkdownEditorPosition();
+      persistCurrentArticleDraft();
       resetPreviewReadingPosition();
       renderApp();
       showToast(articleImportFeedback(`已打开 ${file.name}`, diagramResult, preparedArticleImages));
@@ -814,58 +982,27 @@ async function previewMarkdownFile(file: File): Promise<void> {
   }
 }
 
-async function previewPastedMarkdown(markdown: string): Promise<void> {
-  state.pasteDialogOpen = false;
-  const operation = articlePreparation.begin();
-  const revealOperation = articleRevealTransition.begin();
-
-  try {
-    const diagramResult = await embedArticleDiagramsAsImages({
-      markdown,
-      renderer: browserArticleDiagramRenderer,
-    });
-    if (!operation.isCurrent() || !revealOperation.isCurrent()) {
-      console.warn('[theme-preview] pasted markdown preview discarded reason="a newer article source was selected".');
-      return;
-    }
-
-    const preparedArticleImages = pendingArticleImages(diagramResult.markdown);
-
-    revealOperation.revealArticle(() => {
-      openedArticleIdentity = null;
-      state.article = markdownDocumentFromPaste(preparedArticleImages.markdown);
-      state.articleImages = preparedArticleImages.resolution;
-      resetPreviewReadingPosition();
-      renderApp();
-      showToast(articleImportFeedback('已载入 Markdown', diagramResult, preparedArticleImages));
-    });
-  } catch (error) {
-    console.warn(`[theme-preview] pasted markdown preparation failed reason="${String(error)}".`);
-    if (operation.isCurrent() && revealOperation.isCurrent()) {
-      revealOperation.cancel();
-      showToast('Markdown 处理失败，请重试');
-    }
-  }
-}
-
-async function typesetBundledDemoDiagrams(): Promise<void> {
+async function prepareInitialArticlePreview(): Promise<void> {
   const sourceMarkdown = state.article.markdown;
+  const previewableMarkdown = state.previewMarkdown;
   const operation = articlePreparation.begin();
 
   try {
     const diagramResult = await embedArticleDiagramsAsImages({
-      markdown: sourceMarkdown,
+      markdown: previewableMarkdown,
       renderer: browserArticleDiagramRenderer,
     });
-    if (!operation.isCurrent() || state.article.source !== 'demo' || state.article.markdown !== sourceMarkdown) {
-      console.warn('[theme-preview] bundled demo diagram result discarded reason="article source changed".');
+    if (!operation.isCurrent() || state.article.markdown !== sourceMarkdown) {
+      console.warn(
+        `[moyu-editor] initial article preview discarded file="${state.article.fileName}" reason="article source changed".`,
+      );
       return;
     }
 
-    state.article = { ...state.article, markdown: diagramResult.markdown };
-    renderApp();
+    state.previewMarkdown = diagramResult.markdown;
+    refreshArticlePreview();
   } catch (error) {
-    console.warn(`[theme-preview] bundled demo diagram preparation failed reason="${String(error)}".`);
+    console.warn(`[moyu-editor] initial article preview preparation failed reason="${String(error)}".`);
   }
 }
 
@@ -1040,7 +1177,7 @@ async function revealCurrentArticleImages(
   previousResolution: ArticleImageResolutionState,
 ): Promise<void> {
   // 每张图片独立解析；成功项立即进入文章，失败项继续保留占位并允许再次选择。
-  const embeddingResult = await embedLocalArticleImages({ markdown: state.article.markdown, source });
+  const embeddingResult = await embedLocalArticleImages({ markdown: state.previewMarkdown, source });
   if (!operation.isCurrent()) {
     console.warn(
       `[theme-preview] resolved article images discarded source="${source.label}" reason="a newer article source was selected".`,
@@ -1049,7 +1186,7 @@ async function revealCurrentArticleImages(
   }
 
   const preparedImages = preparedArticleImagesFromEmbedding(previousResolution, embeddingResult);
-  state.article = { ...state.article, markdown: preparedImages.markdown };
+  state.previewMarkdown = preparedImages.markdown;
   state.articleImages = preparedImages.resolution;
   renderApp();
 
@@ -1157,7 +1294,7 @@ function activateTheme(themeId: string): void {
   state.selectedThemeId = themeId;
   normalizeDecorationTarget(requireSelectedTheme(dataset.themes, themeId));
   persistSelectedTheme(themeId);
-  writeThemeToUrl(themeId);
+  reflectThemeSelectionInUrl(themeId, state.themeAppearance);
 }
 
 function renderArticleImageNotice(): string {
@@ -1245,7 +1382,7 @@ function refreshArticlePreview(): void {
   }
 
   rememberPreviewReadingPosition();
-  const selectedTheme = requireSelectedTheme(dataset.themes, state.selectedThemeId);
+  const selectedTheme = activeThemeForAppearance();
   const editedTheme = applyThemeStyleOverrides(
     selectedTheme,
     buildPreviewOverrides(state.editor),
@@ -1253,6 +1390,194 @@ function refreshArticlePreview(): void {
   );
   previewBoard.innerHTML = renderPreview(editedTheme);
   restorePreviewReadingPosition();
+}
+
+function mountMarkdownEditor(): void {
+  const host = app.querySelector<HTMLElement>('[data-markdown-editor]');
+  if (!host || window.matchMedia('(max-width: 720px)').matches) {
+    return;
+  }
+
+  markdownEditor = mountBrowserMarkdownEditor({
+    host,
+    markdown: state.article.markdown,
+    selection: state.markdownSelection,
+    scrollTop: state.markdownScrollTop,
+    onMarkdownChange: reviseCurrentArticle,
+    onScroll: synchronizePreviewFromMarkdown,
+  });
+}
+
+function rememberMarkdownEditorState(): void {
+  if (!markdownEditor) {
+    return;
+  }
+  state.markdownSelection = markdownEditor.selection();
+  state.markdownScrollTop = markdownEditor.scrollMetrics().scrollTop;
+}
+
+function reviseCurrentArticle(markdown: string): void {
+  if (markdown === state.article.markdown) {
+    return;
+  }
+
+  if (openedArticleIdentity) {
+    console.warn(
+      `[moyu-editor] opened article identity abandoned file="${openedArticleIdentity.fileName}" reason="markdown was edited". Reusing any granted image directory for the edited article.`,
+    );
+    openedArticleIdentity = null;
+  }
+
+  state.article = { ...state.article, markdown };
+  state.previewMarkdown = markdown;
+  state.articleImages = state.article.source === 'demo' ? null : pendingArticleImages(markdown).resolution;
+  state.articleDraftSavePhase = 'saving';
+  refreshArticlePreview();
+  refreshArticleImageNotice();
+  refreshMarkdownEditorMeta();
+  scheduleArticleDraftPersistence();
+  scheduleEditedArticlePreparation(markdown);
+}
+
+function scheduleArticleDraftPersistence(): void {
+  window.clearTimeout(articleDraftSaveTimer);
+  articleDraftSaveTimer = window.setTimeout(() => {
+    state.articleDraftSavePhase = persistCurrentArticleDraft() ? 'saved' : 'failed';
+    refreshMarkdownEditorMeta();
+  }, 320);
+}
+
+function persistCurrentArticleDraft(): boolean {
+  try {
+    window.localStorage.setItem(articleDraftStorageKey, serializeArticleDraft(state.article));
+    state.articleDraftSavePhase = 'saved';
+    return true;
+  } catch (error) {
+    console.warn(
+      `[moyu-editor] article draft persistence failed file="${state.article.fileName}" characters=${state.article.markdown.length} reason="${String(
+        error,
+      )}". Keeping the edited article in memory only.`,
+    );
+    state.articleDraftSavePhase = 'failed';
+    return false;
+  }
+}
+
+function scheduleEditedArticlePreparation(markdown: string): void {
+  window.clearTimeout(editedArticlePreparationTimer);
+  const operation = articlePreparation.begin();
+  editedArticlePreparationTimer = window.setTimeout(() => {
+    void prepareEditedArticlePreview(markdown, operation);
+  }, 560);
+}
+
+async function prepareEditedArticlePreview(
+  sourceMarkdown: string,
+  operation: ArticlePreparationOperation,
+): Promise<void> {
+  try {
+    const previewableMarkdown = prepareBundledArticleImages({ ...state.article, markdown: sourceMarkdown });
+    const diagramResult = await embedArticleDiagramsAsImages({
+      markdown: previewableMarkdown,
+      renderer: browserArticleDiagramRenderer,
+    });
+    let preparedImages = pendingArticleImages(diagramResult.markdown);
+
+    await recentArticleImageDirectoryReady;
+    const directoryHandle = recentArticleImageDirectory;
+    if (preparedImages.resolution && directoryHandle) {
+      const permission = await articleImageDirectoryPermission(directoryHandle, false);
+      if (permission === 'granted') {
+        const embeddingResult = await embedLocalArticleImages({
+          markdown: diagramResult.markdown,
+          source: articleImageSourceFromDirectoryHandle(directoryHandle),
+        });
+        preparedImages = preparedArticleImagesFromEmbedding(preparedImages.resolution, embeddingResult);
+      }
+    }
+
+    if (!operation.isCurrent() || state.article.markdown !== sourceMarkdown) {
+      console.warn(
+        `[moyu-editor] edited article preview discarded file="${state.article.fileName}" reason="newer markdown is active".`,
+      );
+      return;
+    }
+
+    state.previewMarkdown = preparedImages.markdown;
+    state.articleImages = preparedImages.resolution;
+    refreshArticlePreview();
+    refreshArticleImageNotice();
+  } catch (error) {
+    if (!operation.isCurrent()) {
+      console.warn(
+        `[moyu-editor] stale article preview preparation failed and was ignored file="${state.article.fileName}" reason="${String(
+          error,
+        )}" decision="a newer markdown preparation is active".`,
+      );
+      return;
+    }
+    console.warn(
+      `[moyu-editor] edited article preview preparation failed file="${state.article.fileName}" reason="${String(
+        error,
+      )}". Keeping the immediate Markdown preview.`,
+    );
+  }
+}
+
+function refreshArticleImageNotice(): void {
+  const noticeSlot = app.querySelector<HTMLElement>('.articleImageNoticeSlot');
+  if (noticeSlot) {
+    noticeSlot.innerHTML = renderArticleImageNotice();
+    noticeSlot.querySelector<HTMLButtonElement>('[data-resolve-article-images]')?.addEventListener('click', () => {
+      if (!articleImageDirectoryPickerFallbackRequired && canChooseArticleImageDirectory()) {
+        void revealArticleImagesFromDirectoryPicker();
+        return;
+      }
+      app.querySelector<HTMLInputElement>('#articleImageDirectoryInput')?.click();
+    });
+  }
+}
+
+function refreshMarkdownEditorMeta(): void {
+  const characterCount = app.querySelector<HTMLElement>('[data-article-character-count]');
+  if (characterCount) {
+    characterCount.textContent = `${articleCharacterCount(state.article.markdown)} 字`;
+  }
+  const saveStatus = app.querySelector<HTMLElement>('[data-draft-save-status]');
+  if (saveStatus) {
+    saveStatus.className = `draftSaveStatus is${capitalize(state.articleDraftSavePhase)}`;
+    saveStatus.textContent = articleDraftSaveLabel(state.articleDraftSavePhase);
+  }
+}
+
+function synchronizePreviewFromMarkdown(metrics: MarkdownEditorScrollMetrics): void {
+  state.markdownScrollTop = metrics.scrollTop;
+  if (synchronizedScrollSource === 'preview') {
+    return;
+  }
+  const previewSurface = app.querySelector<HTMLElement>('.stageCanvas');
+  if (!previewSurface) {
+    return;
+  }
+
+  synchronizedScrollSource = 'markdown';
+  previewSurface.scrollTop = mapSynchronizedScrollPosition({
+    sourceScrollTop: metrics.scrollTop,
+    sourceScrollHeight: metrics.scrollHeight,
+    sourceViewportHeight: metrics.viewportHeight,
+    targetScrollHeight: previewSurface.scrollHeight,
+    targetViewportHeight: previewSurface.clientHeight,
+  });
+  releaseSynchronizedScroll();
+}
+
+function releaseSynchronizedScroll(): void {
+  if (synchronizedScrollFrame !== undefined) {
+    window.cancelAnimationFrame(synchronizedScrollFrame);
+  }
+  synchronizedScrollFrame = window.requestAnimationFrame(() => {
+    synchronizedScrollSource = null;
+  });
 }
 
 function rememberTemplateListScroll(): void {
@@ -1426,23 +1751,105 @@ function centerSelectedMobileTheme(): void {
   themeRail.scrollLeft = selectedTheme.offsetLeft - (themeRail.clientWidth - selectedTheme.clientWidth) / 2;
 }
 
+function renderMarkdownEditorPane(): string {
+  return `
+    <section class="markdownEditorPane" aria-label="Markdown 在线编辑">
+      <input id="markdownFileInput" class="visuallyHidden" type="file" accept=".md,.markdown,text/markdown">
+      <input id="articleImageDirectoryInput" class="visuallyHidden" type="file" webkitdirectory multiple>
+      <header class="markdownPaneHeader">
+        <div>
+          <strong>Markdown</strong>
+          <span>${escapeHtml(articleDisplayFileName(state.article))}</span>
+        </div>
+        <div class="markdownPaneStatus">
+          <span data-article-character-count>${articleCharacterCount(state.article.markdown)} 字</span>
+          <span class="draftSaveStatus is${capitalize(state.articleDraftSavePhase)}" data-draft-save-status>
+            ${articleDraftSaveLabel(state.articleDraftSavePhase)}
+          </span>
+          <button type="button" data-open-markdown title="导入 Markdown 文件">
+            <i class="ti ti-file-upload"></i><span>导入</span>
+          </button>
+          <button type="button" data-restore-bundled-article title="恢复示例内容">
+            <i class="ti ti-restore"></i><span>恢复示例</span>
+          </button>
+        </div>
+      </header>
+      <div class="markdownToolbar" role="toolbar" aria-label="Markdown 格式工具">
+        ${renderMarkdownToolbarButton('heading-1', 'ti-h-1', '一级标题')}
+        ${renderMarkdownToolbarButton('heading-2', 'ti-h-2', '二级标题')}
+        ${renderMarkdownToolbarButton('heading-3', 'ti-h-3', '三级标题')}
+        <span class="markdownToolbarDivider" aria-hidden="true"></span>
+        ${renderMarkdownToolbarButton('bold', 'ti-bold', '加粗')}
+        ${renderMarkdownToolbarButton('italic', 'ti-italic', '斜体')}
+        ${renderMarkdownToolbarButton('inline-code', 'ti-code', '行内代码')}
+        ${renderMarkdownToolbarButton('blockquote', 'ti-blockquote', '引用')}
+        <span class="markdownToolbarDivider" aria-hidden="true"></span>
+        ${renderMarkdownToolbarButton('unordered-list', 'ti-list', '无序列表')}
+        ${renderMarkdownToolbarButton('ordered-list', 'ti-list-numbers', '有序列表')}
+        ${renderMarkdownToolbarButton('task-list', 'ti-list-check', '任务列表')}
+        ${renderMarkdownToolbarButton('code-block', 'ti-code-dots', '代码块')}
+        ${renderMarkdownToolbarButton('table', 'ti-table', '表格')}
+        ${renderMarkdownToolbarButton('link', 'ti-link', '链接')}
+        ${renderMarkdownToolbarButton('horizontal-rule', 'ti-separator-horizontal', '分割线')}
+        <span class="markdownToolbarDivider" aria-hidden="true"></span>
+        <button type="button" data-markdown-history="undo" aria-label="撤销" title="撤销">
+          <i class="ti ti-arrow-back-up"></i>
+        </button>
+        <button type="button" data-markdown-history="redo" aria-label="重做" title="重做">
+          <i class="ti ti-arrow-forward-up"></i>
+        </button>
+      </div>
+      <div class="markdownEditorHost" data-markdown-editor></div>
+    </section>
+  `;
+}
+
+function renderMarkdownToolbarButton(command: MarkdownEditingCommand, icon: string, label: string): string {
+  return `
+    <button type="button" data-markdown-command="${command}" aria-label="${label}" title="${label}">
+      <i class="ti ${icon}"></i>
+    </button>
+  `;
+}
+
+function renderSettingsPanelNavigation(): string {
+  return `
+    <div class="settingsPanelTabs" role="tablist" aria-label="主题与样式">
+      <button
+        type="button"
+        role="tab"
+        class="${state.settingsPanelView === 'themes' ? 'active' : ''}"
+        aria-selected="${state.settingsPanelView === 'themes'}"
+        data-settings-panel-view="themes"
+      >主题</button>
+      <button
+        type="button"
+        role="tab"
+        class="${state.settingsPanelView === 'styles' ? 'active' : ''}"
+        aria-selected="${state.settingsPanelView === 'styles'}"
+        data-settings-panel-view="styles"
+      >样式</button>
+    </div>
+  `;
+}
+
 function renderTemplatePanel(themes: ThemeDefinition[], selectedTheme: ThemeDefinition): string {
   return `
-    <div class="panelHeader">
-      <div>
-        <h1>主题</h1>
-        <p>为文章选择合适的视觉语气</p>
-      </div>
-      <span class="themeCount">${themes.length}</span>
-    </div>
-    <div class="categoryTabs" aria-label="模板分类">
-      ${templateCategories
-        .map((category) => renderTemplateCategoryButton(category.id, category.label, category.summary))
+    ${renderThemeAppearanceSwitch('themeAppearanceSwitch')}
+    <div class="themeColorTabs" aria-label="主题色调">
+      ${themeColorFilters
+        .map((colorFilter) => renderThemeColorButton(colorFilter.id, colorFilter.label))
         .join('')}
     </div>
     <label class="themeSearch">
       <i class="ti ti-search"></i>
-      <input type="search" value="${escapeAttribute(state.themeQuery)}" placeholder="搜索模板名称或用途" data-theme-query>
+      <input
+        type="search"
+        value="${escapeAttribute(state.themeQuery)}"
+        aria-label="搜索主题名称"
+        placeholder="搜索主题名称"
+        data-theme-query
+      >
     </label>
     <nav class="templateList" aria-label="可用模板">
       ${
@@ -1453,22 +1860,43 @@ function renderTemplatePanel(themes: ThemeDefinition[], selectedTheme: ThemeDefi
     </nav>
     <div class="creatorFooter">
       <a href="${githubRepositoryUrl}" target="_blank" rel="noopener noreferrer" title="查看 GitHub 开源仓库">
-        <i class="ti ti-brand-github"></i><span>GitHub 开源</span>
+        <i class="ti ti-brand-github"></i><span>GitHub</span>
       </a>
       <button type="button" data-open-support>
-        <i class="ti ti-coffee"></i><span>请作者喝杯咖啡</span>
+        <i class="ti ti-coffee"></i><span>支持作者</span>
       </button>
     </div>
   `;
 }
 
-function renderTemplateCategoryButton(categoryId: TemplateCategoryId, label: string, summary: string): string {
+function renderThemeAppearanceSwitch(className: string): string {
+  return `
+    <div class="${className}" role="group" aria-label="主题明暗外观">
+      <button
+        type="button"
+        class="${state.themeAppearance === 'light' ? 'active' : ''}"
+        aria-pressed="${state.themeAppearance === 'light'}"
+        data-theme-appearance="light"
+        title="切换为亮色外观"
+      ><i class="ti ti-sun"></i><span>亮色</span></button>
+      <button
+        type="button"
+        class="${state.themeAppearance === 'dark' ? 'active' : ''}"
+        aria-pressed="${state.themeAppearance === 'dark'}"
+        data-theme-appearance="dark"
+        title="切换为暗色外观"
+      ><i class="ti ti-moon"></i><span>暗色</span></button>
+    </div>
+  `;
+}
+
+function renderThemeColorButton(colorFilterId: ThemeColorFilterId, label: string): string {
   return `
     <button
       type="button"
-      class="${state.templateCategoryId === categoryId ? 'active' : ''}"
-      data-template-category="${categoryId}"
-      title="${escapeAttribute(summary)}"
+      class="${state.themeColorFilterId === colorFilterId ? 'active' : ''}"
+      aria-pressed="${state.themeColorFilterId === colorFilterId}"
+      data-theme-color="${colorFilterId}"
     >
       ${escapeHtml(label)}
     </button>
@@ -1478,39 +1906,35 @@ function renderTemplateCategoryButton(categoryId: TemplateCategoryId, label: str
 function renderThemeTemplateCard(theme: ThemeDefinition, selectedTheme: ThemeDefinition): string {
   const themeId = theme.value || theme.id;
   const isSelected = themeId === (selectedTheme.value || selectedTheme.id);
-  const display = themeTemplateDisplay(theme);
+  const paletteSurface = resolveThemeAppearancePreview(theme, state.themeAppearance);
+  const colorLabels = theme.palette.colorFamilies
+    .map((colorFamily) => themeColorFilters.find((filter) => filter.id === colorFamily)?.label)
+    .filter((label): label is string => Boolean(label))
+    .join('、');
 
   return `
-    <button class="templateCard${isSelected ? ' isSelected' : ''}" type="button" data-theme-id="${escapeAttribute(themeId)}">
-      <span class="templateThumb" aria-hidden="true">
-        <span class="templateThumbInner">${renderThemeTemplatePreview(theme)}</span>
+    <button
+      class="templateCard${isSelected ? ' isSelected' : ''}"
+      type="button"
+      data-theme-id="${escapeAttribute(themeId)}"
+      aria-label="使用${escapeAttribute(theme.label)}主题，外观：${themeAppearanceLabel(state.themeAppearance)}，色调：${escapeAttribute(colorLabels)}"
+      aria-current="${isSelected ? 'true' : 'false'}"
+      title="${escapeAttribute(theme.label)}"
+    >
+      <span class="templatePalette" style="background: ${escapeAttribute(paletteSurface.background)}" aria-hidden="true">
+        <strong style="color: ${escapeAttribute(paletteSurface.foreground)}">Aa</strong>
+        <i class="palettePrimary" style="background: ${escapeAttribute(paletteSurface.primary)}"></i>
+        <i class="paletteSecondary" style="background: ${escapeAttribute(paletteSurface.secondary)}"></i>
+        <i class="paletteNeutral" style="background: ${escapeAttribute(paletteSurface.foreground)}"></i>
       </span>
-      <span class="templateInfo">
-        <strong>${escapeHtml(display.name)}</strong>
-        <em>${escapeHtml(display.summary)}</em>
-      </span>
+      <span class="templateName">${escapeHtml(theme.label)}</span>
+      <span class="templateSelectionMark" aria-hidden="true"><i class="ti ti-check"></i></span>
     </button>
   `;
 }
 
-function renderThemeTemplatePreview(theme: ThemeDefinition): string {
-  const themeId = theme.value || theme.id;
-  const cachedPreview = themeTemplatePreviewCache.get(themeId);
-  if (cachedPreview) {
-    return cachedPreview;
-  }
-
-  const previewTheme = applyThemeStyleOverrides(theme, createEmptyStyleOverrides(), {
-    sectionDividerEnabled: false,
-  });
-  const preview = renderThemeMarkdown({ markdown: themeTemplatePreviewMarkdown, theme: previewTheme }).html;
-  themeTemplatePreviewCache.set(themeId, preview);
-  return preview;
-}
-
 function renderMobileThemeDock(selectedTheme: ThemeDefinition): string {
   const selectedThemeId = selectedTheme.value || selectedTheme.id;
-  const selectedThemeDisplay = themeTemplateDisplay(selectedTheme);
 
   return `
     <nav class="mobileThemeDock" aria-label="切换文章主题">
@@ -1518,24 +1942,24 @@ function renderMobileThemeDock(selectedTheme: ThemeDefinition): string {
         <span class="mobileThemeMark"><img src="/moyu-mark.svg" alt="" aria-hidden="true"></span>
         <span>
           <small>当前主题</small>
-          <strong>${escapeHtml(selectedThemeDisplay.name)}</strong>
+          <strong>${escapeHtml(selectedTheme.label)}</strong>
         </span>
-        <em>左右滑动选择</em>
+        ${renderThemeAppearanceSwitch('mobileAppearanceSwitch')}
       </header>
       <div class="mobileThemeRail">
         ${dataset.themes
           .map((theme) => {
             const themeId = theme.value || theme.id;
-            const display = themeTemplateDisplay(theme);
             const isSelected = themeId === selectedThemeId;
+            const palette = resolveThemeAppearancePreview(theme, state.themeAppearance);
             return `
               <button
                 type="button"
                 data-theme-id="${escapeAttribute(themeId)}"
                 aria-current="${isSelected ? 'true' : 'false'}"
               >
-                <i style="background: ${escapeAttribute(theme.primary_color || '#555955')}"></i>
-                <span>${escapeHtml(display.name)}</span>
+                <i style="background: ${escapeAttribute(palette.primary)}"></i>
+                <span>${escapeHtml(theme.label)}</span>
               </button>
             `;
           })
@@ -1546,7 +1970,7 @@ function renderMobileThemeDock(selectedTheme: ThemeDefinition): string {
 }
 
 function renderPreview(editedTheme: ThemeDefinition): string {
-  const result = renderThemeMarkdown({ markdown: state.article.markdown, theme: editedTheme, readingAnchors: true });
+  const result = renderThemeMarkdown({ markdown: state.previewMarkdown, theme: editedTheme, readingAnchors: true });
   return `<div class="articleFrame">${result.html}</div>`;
 }
 
@@ -1554,18 +1978,26 @@ function renderStyleEditor(editedTheme: ThemeDefinition): string {
   return `
     <div class="settingsHeader">
       <div>
-        <h2>${state.editor.activeTab === 'board' ? '底板设置' : '样式'}</h2>
-        <p>${state.editor.activeTab === 'board' ? '设置背景修饰' : '微调当前主题的表现'}</p>
+        <span class="panelEyebrow">当前主题 · ${themeAppearanceLabel(state.themeAppearance)}</span>
+        <h2>${escapeHtml(editedTheme.label)}</h2>
       </div>
-      <button class="resetStyleButton" type="button" data-style-scope="reset" data-style-key="all">
-        <i class="ti ti-refresh"></i><span>重置</span>
-      </button>
+      <div class="styleSettingsActions">
+        <button class="resetStyleButton" type="button" data-style-scope="reset" data-style-key="all">
+          <i class="ti ti-refresh"></i><span>重置</span>
+        </button>
+      </div>
     </div>
-    <div class="editorTabs">
+    <div class="editorTabs" role="tablist" aria-label="样式类型">
       ${editorTabs
         .map(
           (tab) => `
-            <button type="button" class="${state.editor.activeTab === tab.id ? 'active' : ''}" data-editor-tab="${tab.id}">
+            <button
+              type="button"
+              role="tab"
+              class="${state.editor.activeTab === tab.id ? 'active' : ''}"
+              aria-selected="${state.editor.activeTab === tab.id}"
+              data-editor-tab="${tab.id}"
+            >
               <i class="ti ${tab.icon}"></i>
               <strong>${tab.label}</strong>
             </button>
@@ -1575,32 +2007,6 @@ function renderStyleEditor(editedTheme: ThemeDefinition): string {
     </div>
     <div class="editorBody">
       ${renderEditorBody(editedTheme)}
-    </div>
-  `;
-}
-
-function renderPasteDialog(): string {
-  return `
-    <div class="dialogBackdrop" role="presentation">
-      <section class="pasteDialog" role="dialog" aria-modal="true" aria-labelledby="pasteDialogTitle">
-        <header>
-          <div>
-            <span class="panelEyebrow">快速导入</span>
-            <h2 id="pasteDialogTitle">粘贴 Markdown</h2>
-            <p>内容只在当前页面生效，刷新后会重新载入示例文档。</p>
-          </div>
-          <button class="dialogClose" type="button" data-close-paste-dialog aria-label="关闭">
-            <i class="ti ti-x"></i>
-          </button>
-        </header>
-        <textarea id="pastedMarkdown" placeholder="# 输入文章标题\n\n从这里开始粘贴 Markdown 内容……"></textarea>
-        <footer>
-          <button class="dialogCancel" type="button" data-close-paste-dialog>取消</button>
-          <button class="dialogConfirm" type="button" data-preview-pasted-markdown>
-            <i class="ti ti-eye"></i><span>载入预览</span>
-          </button>
-        </footer>
-      </section>
     </div>
   `;
 }
@@ -1898,7 +2304,7 @@ function renderDecorationEditor(theme: ThemeDefinition): string {
           colorEntries.length > 0
             ? colorEntries
                 .map(({ key, value }) =>
-                  renderColorControl(decorativeFieldLabel(key), `decoration.${activeTarget}`, key, normalizeColorValue(String(value))),
+                  renderColorControl(decorationFieldLabel(key), `decoration.${activeTarget}`, key, normalizeColorValue(String(value))),
                 )
                 .join('')
             : '<p class="emptyHint">当前装饰没有可直接编辑的颜色变量。</p>'
@@ -1952,6 +2358,13 @@ function requireSelectedTheme(themes: ThemeDefinition[], themeId: string): Theme
   }).selectedTheme;
 }
 
+function activeThemeForAppearance(): ThemeDefinition {
+  return applyThemeAppearance(
+    requireSelectedTheme(dataset.themes, state.selectedThemeId),
+    state.themeAppearance,
+  );
+}
+
 function enterWechatCopyFlow(): void {
   const decision = decideWechatCopyEntry({
     acceptedThisSession: state.wechatClipboardConsentAcceptedThisSession,
@@ -1969,14 +2382,15 @@ function enterWechatCopyFlow(): void {
 }
 
 async function copyCurrentArticleHtml(): Promise<void> {
-  const selectedTheme = requireSelectedTheme(dataset.themes, state.selectedThemeId);
+  const preparedMarkdown = await prepareCurrentArticleForCopy();
+  const selectedTheme = activeThemeForAppearance();
   const editedTheme = applyThemeStyleOverrides(
     selectedTheme,
     buildPreviewOverrides(state.editor),
     state.editor.decorationPreferences,
   );
   const html = renderThemeMarkdown({
-    markdown: state.article.markdown,
+    markdown: preparedMarkdown,
     theme: editedTheme,
     target: 'wechat-clipboard',
   }).html;
@@ -2013,6 +2427,46 @@ async function copyCurrentArticleHtml(): Promise<void> {
     action: 'open-wechat-editor',
     actionLabel: '打开公众号后台',
   });
+}
+
+async function prepareCurrentArticleForCopy(): Promise<string> {
+  const sourceMarkdown = state.article.markdown;
+  try {
+    const previewableMarkdown = prepareBundledArticleImages(state.article);
+    const diagramResult = await embedArticleDiagramsAsImages({
+      markdown: previewableMarkdown,
+      renderer: browserArticleDiagramRenderer,
+    });
+    let preparedMarkdown = diagramResult.markdown;
+
+    await recentArticleImageDirectoryReady;
+    const directoryHandle = recentArticleImageDirectory;
+    if (directoryHandle && collectLocalArticleImages(preparedMarkdown).length > 0) {
+      const permission = await articleImageDirectoryPermission(directoryHandle, false);
+      if (permission === 'granted') {
+        const imageResult = await embedLocalArticleImages({
+          markdown: preparedMarkdown,
+          source: articleImageSourceFromDirectoryHandle(directoryHandle),
+        });
+        preparedMarkdown = imageResult.markdown;
+      }
+    }
+
+    if (state.article.markdown !== sourceMarkdown) {
+      console.warn(
+        `[moyu-editor] copy preparation abandoned file="${state.article.fileName}" reason="markdown changed during preparation". Preparing the newest article instead.`,
+      );
+      return prepareCurrentArticleForCopy();
+    }
+    return preparedMarkdown;
+  } catch (error) {
+    console.warn(
+      `[moyu-editor] copy preparation failed file="${state.article.fileName}" reason="${String(
+        error,
+      )}". Falling back to the latest visible preview.`,
+    );
+    return state.previewMarkdown;
+  }
 }
 
 function openWechatEditorFromToast(): void {
@@ -2242,6 +2696,85 @@ function dismissToast(): void {
   state.toast = null;
 }
 
+function readStoredArticleDraft(): string | null {
+  try {
+    return window.localStorage.getItem(articleDraftStorageKey);
+  } catch (error) {
+    console.warn(
+      `[moyu-editor] stored article draft unavailable reason="${String(error)}". Falling back to bundled article.`,
+    );
+    return null;
+  }
+}
+
+function clearStoredArticleDraft(): void {
+  try {
+    window.localStorage.removeItem(articleDraftStorageKey);
+  } catch (error) {
+    console.warn(
+      `[moyu-editor] stored article draft cleanup failed reason="${String(
+        error,
+      )}". The restored bundled article remains active in memory.`,
+    );
+  }
+}
+
+function restoreBundledArticle(): void {
+  window.clearTimeout(articleDraftSaveTimer);
+  window.clearTimeout(editedArticlePreparationTimer);
+  articlePreparation.begin();
+  clearStoredArticleDraft();
+  openedArticleIdentity = null;
+  state.article = { ...bundledArticle };
+  state.previewMarkdown = generatedArticleMarkdown;
+  state.articleImages = null;
+  state.articleDraftSavePhase = 'saved';
+  resetMarkdownEditorPosition();
+  resetPreviewReadingPosition();
+  renderApp();
+  void prepareInitialArticlePreview();
+  showToast('已恢复示例内容');
+}
+
+function resetMarkdownEditorPosition(): void {
+  state.markdownSelection = { anchor: 0, head: 0 };
+  state.markdownScrollTop = 0;
+}
+
+function articleCharacterCount(markdown: string): number {
+  return markdown.replace(/\s/g, '').length;
+}
+
+function articleDraftSaveLabel(phase: ArticleDraftSavePhase): string {
+  const labels: Record<ArticleDraftSavePhase, string> = {
+    saved: '已自动保存',
+    saving: '保存中…',
+    failed: '保存失败',
+  };
+  return labels[phase];
+}
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function initialMarkdownPaneWidth(): number {
+  const approximateWorkbenchWidth = Math.max(720, window.innerWidth - desktopSettingsPanelWidth);
+  return constrainMarkdownPaneWidth({
+    workbenchWidth: approximateWorkbenchWidth,
+    requestedWidth: Math.round(approximateWorkbenchWidth * 0.38),
+    dividerWidth: workbenchDividerWidth,
+    minimumMarkdownWidth: minimumMarkdownPaneWidth,
+    minimumPreviewWidth: minimumPreviewPaneWidth,
+  });
+}
+
+function prepareBundledArticleImages(article: ArticleDocument): string {
+  return article.source === 'demo'
+    ? embedKnownArticleImages(article.markdown, generatedArticleImages)
+    : article.markdown;
+}
+
 function readStoredThemeId(): string | null {
   try {
     return window.localStorage.getItem('theme-preview:selected-theme');
@@ -2259,9 +2792,31 @@ function persistSelectedTheme(themeId: string): void {
   }
 }
 
-function writeThemeToUrl(themeId: string): void {
+function readStoredThemeAppearance(): string | null {
+  try {
+    return window.localStorage.getItem(themeAppearanceStorageKey);
+  } catch (error) {
+    console.warn(
+      `[theme-preview] stored theme appearance unavailable reason="${String(error)}". Falling back to URL/light appearance.`,
+    );
+    return null;
+  }
+}
+
+function persistThemeAppearance(appearance: ThemeAppearance): void {
+  try {
+    window.localStorage.setItem(themeAppearanceStorageKey, appearance);
+  } catch (error) {
+    console.warn(
+      `[theme-preview] theme appearance write failed appearance="${appearance}" reason="${String(error)}".`,
+    );
+  }
+}
+
+function reflectThemeSelectionInUrl(themeId: string, appearance: ThemeAppearance): void {
   const url = new URL(window.location.href);
   url.searchParams.set('theme', themeId);
+  url.searchParams.set('appearance', appearance);
   window.history.replaceState(null, '', url);
 }
 
@@ -2626,21 +3181,6 @@ function decorationRuleLabel(ruleKey: string): string {
   return labels[ruleKey] ?? ruleKey;
 }
 
-function decorativeFieldLabel(fieldKey: string): string {
-  const labels: Record<string, string> = {
-    color: '颜色',
-    title_color: '标题色',
-    text_color: '文字色',
-    meta_color: 'meta color',
-    accent_color: '强调色',
-    number_color: '序号色',
-    number_bg: '序号背景',
-    line_color: '线条色',
-    sub_line_color: '辅助线',
-  };
-  return labels[fieldKey] ?? fieldKey;
-}
-
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -2655,4 +3195,4 @@ function escapeAttribute(value: string): string {
 }
 
 renderApp();
-void typesetBundledDemoDiagrams();
+void prepareInitialArticlePreview();

@@ -25,6 +25,13 @@ const htmlImagePattern = /<img\b[^>]*\bsrc=(["'])(.*?)\1/gi;
 const directlyRenderableImagePattern = /^(https?:|data:|blob:|\/\/)/i;
 const imageDataUrlPattern = /^data:image\/[a-z0-9.+-]+(?:;[^,]*)?,/i;
 
+export function embedKnownArticleImages(markdown: string, knownImages: Record<string, string>): string {
+  const replacements = new Map(
+    Object.entries(knownImages).filter((entry) => imageDataUrlPattern.test(entry[1])),
+  );
+  return replaceArticleImageUrls(markdown, replacements);
+}
+
 export function collectLocalArticleImages(markdown: string): LocalArticleImage[] {
   const imageUrls = collectArticleImageUrls(markdown);
   const localImages: LocalArticleImage[] = [];

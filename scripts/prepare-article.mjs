@@ -27,7 +27,9 @@ const outputPath = resolve(projectRoot, 'src/data/generated-article.ts');
 mkdirSync(dirname(outputPath), { recursive: true });
 writeFileSync(
   outputPath,
-  `export const generatedArticleMarkdown = ${JSON.stringify(preparedMarkdown.markdown)};\n\n` +
+  `export const generatedArticleSourceMarkdown = ${JSON.stringify(sourceMarkdown)};\n\n` +
+    `export const generatedArticleMarkdown = ${JSON.stringify(preparedMarkdown.markdown)};\n\n` +
+    `export const generatedArticleImages = ${JSON.stringify(preparedMarkdown.images, null, 2)} as const;\n\n` +
     `export const generatedArticleStats = ${JSON.stringify(
       {
         sourcePath: relativeFromProject(sourcePath),
@@ -72,6 +74,7 @@ function embedLocalImagesAsDataUrls(markdown, markdownPath) {
 
   return {
     markdown: nextMarkdown,
+    images: Object.fromEntries(replacements),
     imageCount: imageUrls.length,
     embeddedImageCount: replacements.size,
     failedImageCount,

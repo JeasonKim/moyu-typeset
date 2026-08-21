@@ -1,9 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   collectLocalArticleImages,
+  embedKnownArticleImages,
   embedLocalArticleImages,
   type ArticleImageSource,
 } from './article-images';
+
+describe('embedKnownArticleImages', () => {
+  it('keeps editable Markdown paths while preparing bundled images for preview', () => {
+    const markdown = '![封面](./docs/cover.jpg)\n\n[下载封面](./docs/cover.jpg)';
+
+    expect(
+      embedKnownArticleImages(markdown, {
+        './docs/cover.jpg': 'data:image/jpeg;base64,Y292ZXI=',
+      }),
+    ).toBe('![封面](data:image/jpeg;base64,Y292ZXI=)\n\n[下载封面](./docs/cover.jpg)');
+  });
+});
 
 describe('collectLocalArticleImages', () => {
   it('collects unique Markdown and HTML local images while ignoring directly renderable URLs', () => {

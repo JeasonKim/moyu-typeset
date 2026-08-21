@@ -1,5 +1,16 @@
 export type StyleMap = Record<string, string | number | boolean | null | undefined>;
 
+export type ThemeColorFamily = 'monochrome' | 'warm' | 'cool' | 'colorful';
+
+export type ThemeAppearance = 'light' | 'dark';
+
+export interface ThemePalette {
+  colorFamilies: ThemeColorFamily[];
+  appearance: ThemeAppearance;
+  primary: string;
+  secondary: string;
+}
+
 export interface ThemeComponent {
   enabled?: boolean;
   template?: string;
@@ -33,9 +44,8 @@ export interface ThemeDefinition {
   id: string;
   value: string;
   label: string;
+  palette: ThemePalette;
   labelEn?: string;
-  description?: string;
-  primary_color?: string;
   author?: string;
   type?: string;
   previewUrl?: string;

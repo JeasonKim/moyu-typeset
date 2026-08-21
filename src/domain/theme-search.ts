@@ -1,5 +1,4 @@
 import type { ThemeDefinition } from './theme-types';
-import { describeThemeCategories } from './template-categories';
 
 export function filterThemesByQuery(themes: ThemeDefinition[], query: string): ThemeDefinition[] {
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -13,8 +12,6 @@ export function filterThemesByQuery(themes: ThemeDefinition[], query: string): T
       theme.value,
       theme.label,
       theme.labelEn,
-      theme.description,
-      describeThemeCategories(theme),
     ]
       .filter(Boolean)
       .join(' ')
