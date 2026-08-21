@@ -10,9 +10,9 @@ export interface ThemeColorFilter {
 export const themeColorFilters: ThemeColorFilter[] = [
   { id: 'all', label: '全部' },
   { id: 'monochrome', label: '黑白' },
+  { id: 'colorful', label: '多彩' },
   { id: 'warm', label: '暖色' },
   { id: 'cool', label: '冷色' },
-  { id: 'colorful', label: '多彩' },
 ];
 
 export function filterThemesByColor(themes: ThemeDefinition[], filterId: ThemeColorFilterId): ThemeDefinition[] {

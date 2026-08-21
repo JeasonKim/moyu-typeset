@@ -22,6 +22,12 @@ export interface RenderThemeMarkdownResult {
 
 type TableCellTag = 'th' | 'td';
 
+interface RenderMarkdownListMarkerInput {
+  index: number;
+  ordered: boolean;
+  start: number;
+}
+
 export function renderThemeMarkdown(input: RenderThemeMarkdownInput): RenderThemeMarkdownResult {
   const { markdown, theme } = input;
   const config = theme.config;
@@ -121,17 +127,21 @@ function renderHeading(token: Extract<Token, { type: 'heading' }>, context: Rend
   let headingHtml: string;
 
   if (rule?.replace_original && rule.decoration) {
+    const replacementContentStyle = replacementHeadingContentStyle(rule.replacement_text_style);
+    const replacementContent = Object.keys(replacementContentStyle).length > 0
+      ? `<span style="${styleToAttribute(replacementContentStyle)}">${inlineHtml}</span>`
+      : inlineHtml;
     const componentHtml = renderComponent(
       context.config.components?.[rule.decoration],
       {
-        content: inlineHtml,
+        content: replacementContent,
         number: nextHeadingNumber(token.depth, context, rule.auto_number),
       },
       rule.variant,
     );
 
     if (componentHtml) {
-      headingHtml = componentHtml;
+      headingHtml = mergeReplacementHeadingLayout(componentHtml, rule.replacement_text_style);
       return `${headingHtml}${renderInsertedDecorationAfter(key, context)}`;
     }
 
@@ -142,6 +152,54 @@ function renderHeading(token: Extract<Token, { type: 'heading' }>, context: Rend
 
   headingHtml = `<${key} style="${styleToAttribute(context.config.block?.[key])}" data-heading="true">${inlineHtml}</${key}>`;
   return `${headingHtml}${renderInsertedDecorationAfter(key, context)}`;
+}
+
+function replacementHeadingContentStyle(styleOverride?: StyleMap): StyleMap {
+  if (!styleOverride) {
+    return {};
+  }
+
+  const contentProperties = new Set([
+    'color',
+    'font-size',
+    'font-weight',
+    'letter-spacing',
+    'line-height',
+    'text-align',
+  ]);
+  const contentStyle = Object.fromEntries(
+    Object.entries(styleOverride).filter(([property]) => contentProperties.has(property)),
+  ) as StyleMap;
+
+  if (contentStyle['text-align'] !== undefined) {
+    contentStyle.display = 'block';
+    contentStyle.width = '100%';
+  }
+
+  return contentStyle;
+}
+
+function mergeReplacementHeadingLayout(componentHtml: string, styleOverride?: StyleMap): string {
+  const marginBottom = styleOverride?.['margin-bottom'];
+  if (marginBottom === undefined || marginBottom === null || marginBottom === false) {
+    return componentHtml;
+  }
+
+  const layoutStyle = styleToAttribute({ 'margin-bottom': marginBottom });
+  return componentHtml.replace(
+    /^<([a-zA-Z][\w:-]*)([^>]*)>/,
+    (_openingTag, tagName: string, rawAttributes: string) => {
+      if (/\sstyle="[^"]*"/.test(rawAttributes)) {
+        const attributes = rawAttributes.replace(
+          /\sstyle="([^"]*)"/,
+          (_styleAttribute, currentStyle: string) => ` style="${currentStyle}; ${layoutStyle}"`,
+        );
+        return `<${tagName}${attributes}>`;
+      }
+
+      return `<${tagName}${rawAttributes} style="${layoutStyle}">`;
+    },
+  );
 }
 
 interface InlineTokenSequenceOmission {
@@ -252,28 +310,45 @@ function renderBlockquote(token: Extract<Token, { type: 'blockquote' }>, context
 
 function renderList(token: Extract<Token, { type: 'list' }>, context: RenderContext): string {
   const tag = token.ordered ? 'ol' : 'ul';
-  const listStyle = styleToAttribute(context.config.block?.[tag]);
-  const listItemStyle = styleToAttribute(context.config.inline?.listitem);
+  const listStyle = styleToAttribute({
+    ...context.config.block?.[tag],
+    'list-style': 'none',
+  });
+  const listItemStyle = styleToAttribute({
+    ...context.config.inline?.listitem,
+    'list-style': 'none',
+    display: 'flex',
+    'align-items': 'flex-start',
+  });
+  const listStart = markdownListStart(token);
 
   if (context.target === 'wechat-clipboard') {
-    return renderWechatCompatibleList(token, context, tag);
+    return renderWechatCompatibleList(token, context, tag, listStart);
   }
 
   const items = token.items
-    .map((item) => {
+    .map((item, index) => {
+      const listMarker = item.task
+        ? ''
+        : renderMarkdownListMarker({ ordered: token.ordered, index, start: listStart });
       const taskMarker = item.task ? renderTaskMarker(item.checked === true) : '';
       const contentTokens = item.task ? item.tokens.filter((itemToken) => itemToken.type !== 'checkbox') : item.tokens;
-      return `<li style="${listItemStyle}">${taskMarker}${renderListItemContent(contentTokens ?? [], context)}</li>`;
+      return `<li style="${listItemStyle}">${listMarker}${taskMarker}<section data-markdown-list-content="true" style="display: block; flex: 1; min-width: 0; color: inherit">${renderListItemContent(
+        contentTokens ?? [],
+        context,
+      )}</section></li>`;
     })
     .join('');
 
-  return `<${tag} style="${listStyle}">${items}</${tag}>`;
+  const startAttribute = token.ordered && listStart !== 1 ? ` start="${listStart}"` : '';
+  return `<${tag}${startAttribute} role="list" style="${listStyle}">${items}</${tag}>`;
 }
 
 function renderWechatCompatibleList(
   token: Extract<Token, { type: 'list' }>,
   context: RenderContext,
   tag: 'ol' | 'ul',
+  listStart: number,
 ): string {
   const configuredListStyle = context.config.block?.[tag];
   const copiedListStyle = styleToAttribute({
@@ -288,7 +363,9 @@ function renderWechatCompatibleList(
     .map((item, index) => {
       const taskMarker = item.task ? renderTaskMarker(item.checked === true) : '';
       const contentTokens = item.task ? item.tokens.filter((itemToken) => itemToken.type !== 'checkbox') : item.tokens;
-      const listMarker = item.task ? '' : renderWechatListMarker(token.ordered, index, configuredListStyle);
+      const listMarker = item.task
+        ? ''
+        : renderWechatListMarker({ ordered: token.ordered, index, start: listStart });
       return `<section data-wechat-list-item="true" style="${copiedItemStyle}">${listMarker}${taskMarker}${renderListItemContent(
         contentTokens ?? [],
         context,
@@ -299,14 +376,25 @@ function renderWechatCompatibleList(
   return `<section data-wechat-list="${token.ordered ? 'ordered' : 'unordered'}" style="${copiedListStyle}">${items}</section>`;
 }
 
-function renderWechatListMarker(ordered: boolean, index: number, style?: StyleMap): string {
-  const configuredMarker = style?.['list-style'] ?? style?.list_style;
-  if (configuredMarker === 'none') {
-    return '';
-  }
+function renderMarkdownListMarker(input: RenderMarkdownListMarkerInput): string {
+  const marker = listMarkerLabel(input);
+  const minimumWidth = input.ordered ? '1.65em' : '1em';
+  const textAlignment = input.ordered ? 'right' : 'center';
 
-  const marker = ordered ? `${index + 1}.` : '•';
+  return `<span data-markdown-list-marker="true" aria-hidden="true" style="display: block; flex: 0 0 auto; min-width: ${minimumWidth}; margin-right: 0.45em; color: inherit; font-family: Arial, sans-serif; font-weight: 600; line-height: inherit; text-align: ${textAlignment}">${marker}</span>`;
+}
+
+function renderWechatListMarker(input: RenderMarkdownListMarkerInput): string {
+  const marker = listMarkerLabel(input);
   return `<span style="margin-right: 0.45em" data-wechat-list-marker="true">${marker}</span>`;
+}
+
+function listMarkerLabel(input: RenderMarkdownListMarkerInput): string {
+  return input.ordered ? `${input.start + input.index}.` : '•';
+}
+
+function markdownListStart(token: Extract<Token, { type: 'list' }>): number {
+  return token.ordered && typeof token.start === 'number' ? token.start : 1;
 }
 
 function renderTaskMarker(checked: boolean): string {

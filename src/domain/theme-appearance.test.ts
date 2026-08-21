@@ -5,6 +5,7 @@ import {
   resolveThemeAppearancePreview,
   selectThemeAppearance,
 } from './theme-appearance';
+import { inspectPerceptualColor } from './perceptual-color';
 import { contrastRatio, inferThemeAppearance, resolveThemePaletteSurface } from './theme-palette';
 import type { StyleMap, ThemeDefinition, ThemesDataset } from './theme-types';
 
@@ -296,6 +297,48 @@ describe('applyThemeAppearance', () => {
     }
   });
 
+  it('preserves the hue and useful chroma of colorful themes in dark appearance', () => {
+    const dataset = themesDataset as unknown as ThemesDataset;
+    const colorfulThemes = dataset.themes.filter((theme) => theme.palette.colorFamilies.includes('colorful'));
+
+    for (const theme of colorfulThemes) {
+      const darkPreview = resolveThemeAppearancePreview(theme, 'dark');
+      const sourcePrimary = inspectPerceptualColor(theme.palette.primary);
+      const sourceSecondary = inspectPerceptualColor(theme.palette.secondary);
+      const darkPrimary = inspectPerceptualColor(darkPreview.primary);
+      const darkSecondary = inspectPerceptualColor(darkPreview.secondary);
+
+      expect(hueDistance(sourcePrimary.hue, darkPrimary.hue), `${theme.value}/primary hue`).toBeLessThan(5);
+      expect(hueDistance(sourceSecondary.hue, darkSecondary.hue), `${theme.value}/secondary hue`).toBeLessThan(5);
+      expect(darkPrimary.chroma, `${theme.value}/primary chroma`).toBeGreaterThanOrEqual(
+        sourcePrimary.chroma * 0.68,
+      );
+      expect(darkSecondary.chroma, `${theme.value}/secondary chroma`).toBeGreaterThanOrEqual(
+        sourceSecondary.chroma * 0.5,
+      );
+      expect(
+        contrastRatio(darkPreview.background, darkPreview.primary),
+        `${theme.value}/primary contrast`,
+      ).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('keeps colorful filled title surfaces vivid while retaining readable text', () => {
+    const dataset = themesDataset as unknown as ThemesDataset;
+    const memphisTheme = dataset.themes.find((theme) => theme.value === 'Neo Memphis Parade')!;
+    const sourceStyle = memphisTheme.config?.components?.['title_neo_memphis']?.style;
+    const darkStyle = applyThemeAppearance(memphisTheme, 'dark')
+      .config?.components?.['title_neo_memphis']?.style;
+    const sourceBackground = String(sourceStyle?.accent_yellow);
+    const darkBackground = String(darkStyle?.accent_yellow);
+    const darkTitle = String(darkStyle?.title_color);
+
+    expect(inspectPerceptualColor(darkBackground).chroma).toBeGreaterThanOrEqual(
+      inspectPerceptualColor(sourceBackground).chroma * 0.48,
+    );
+    expect(contrastRatio(darkBackground, darkTitle)).toBeGreaterThanOrEqual(4.5);
+  });
+
   it('keeps every bundled theme geometry identical between light and dark appearances', () => {
     const dataset = themesDataset as unknown as ThemesDataset;
 
@@ -448,6 +491,11 @@ describe('applyThemeAppearance', () => {
     expect(contrastRatio(paintedQuoteBandColor, surface.foreground)).toBeGreaterThanOrEqual(4.5);
   });
 });
+
+function hueDistance(firstHue: number, secondHue: number): number {
+  const distance = Math.abs(firstHue - secondHue) % 360;
+  return Math.min(distance, 360 - distance);
+}
 
 describe('resolveThemeAppearancePreview', () => {
   it('uses the requested appearance without rebuilding the full theme', () => {

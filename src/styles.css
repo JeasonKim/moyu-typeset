@@ -1,43 +1,46 @@
 :root {
   --font-ui:
-    ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
-    "Microsoft YaHei UI", "Microsoft YaHei", Arial, sans-serif;
+    "Noto Sans SC", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", Arial, sans-serif;
   --font-brand: "Songti SC", STSong, "Noto Serif CJK SC", "Source Han Serif SC", SimSun, serif;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", "Courier New", monospace;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
   --text-caption: 12px;
   --text-ui: 13px;
   --text-body: 14px;
   --text-subtitle: 16px;
   --text-title: 18px;
   --text-dialog-title: 22px;
-  color: #202521;
-  background: #eef0eb;
+  color: #59625c;
+  background: #ecefeb;
   font-family: var(--font-ui);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --accent: #476454;
-  --accent-strong: #26382f;
-  --accent-soft: #e7efe9;
-  --ink: #202521;
-  --ink-secondary: #414943;
-  --muted: #6b746e;
-  --line: #e2e5df;
-  --line-strong: #cbd1ca;
-  --panel: #fafbf8;
-  --surface: #ffffff;
-  --surface-subtle: #f3f5f1;
-  --surface-selected: #eaeeea;
-  --canvas: #eef0eb;
-  --focus-ring: rgba(71, 100, 84, 0.24);
-  --shadow-soft: rgba(38, 56, 47, 0.08);
-  --shadow-raised: rgba(38, 56, 47, 0.15);
+  --accent: #6f7d74;
+  --accent-strong: #4b5850;
+  --accent-soft: #edf0ed;
+  --ink: #343b36;
+  --ink-secondary: #59625c;
+  --muted: #667069;
+  --line: #e8ebe6;
+  --line-strong: #d8ddd7;
+  --panel: #f8f9f7;
+  --surface: #fbfcfb;
+  --surface-subtle: #f1f3f0;
+  --surface-selected: #ecefeb;
+  --canvas: #e9ece8;
+  --focus-ring: rgba(95, 111, 101, 0.22);
+  --shadow-soft: rgba(41, 50, 45, 0.045);
+  --shadow-raised: rgba(41, 50, 45, 0.1);
   --radius-control: 9px;
   --radius-card: 12px;
   --radius-panel: 16px;
   --duration-fast: 160ms;
   --workbench-header-height: 64px;
-  --workbench-header-surface: rgba(255, 255, 253, 0.94);
+  --workbench-header-surface: rgba(250, 251, 249, 0.92);
   --layer-content: 1;
   --layer-control: 4;
   --layer-inline-overlay: 8;
@@ -60,6 +63,8 @@ body {
   min-width: 320px;
   min-height: 100vh;
   overflow: hidden;
+  color: var(--ink-secondary);
+  font-weight: var(--weight-regular);
 }
 
 button,
@@ -123,13 +128,12 @@ textarea:focus-visible {
   position: relative;
   z-index: var(--layer-header);
   border-bottom: 1px solid var(--line);
-  background: rgba(255, 255, 253, 0.96);
+  background: rgba(250, 251, 249, 0.94);
   backdrop-filter: blur(18px);
 }
 
 .brandLockup,
 .publishButton,
-.previewSwitch,
 .documentMeta {
   display: flex;
   align-items: center;
@@ -146,10 +150,10 @@ textarea:focus-visible {
 }
 
 .brandLockup strong {
-  color: var(--ink);
+  color: var(--ink-secondary);
   font-family: var(--font-brand);
   font-size: 18px;
-  font-weight: 700;
+  font-weight: var(--weight-semibold);
   letter-spacing: 0.04em;
 }
 
@@ -158,7 +162,7 @@ textarea:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  color: #7b827d;
+  color: var(--muted);
   font-size: 10px;
   line-height: 1.2;
   letter-spacing: 0.04em;
@@ -197,7 +201,7 @@ textarea:focus-visible {
   padding: 0 14px;
   border-radius: 10px;
   font-size: var(--text-ui);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
   white-space: nowrap;
 }
 
@@ -213,7 +217,7 @@ textarea:focus-visible {
 .siteHeaderSummary strong {
   color: var(--ink-secondary);
   font-size: var(--text-ui);
-  font-weight: 650;
+  font-weight: var(--weight-medium);
   line-height: 1.3;
 }
 
@@ -224,23 +228,22 @@ textarea:focus-visible {
 }
 
 .publishButton {
-  color: #fff;
-  border: 1px solid var(--accent-strong);
-  background: var(--accent-strong);
+  color: var(--ink-secondary);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
 }
 
 .publishButton:hover {
-  color: #fff;
-  border-color: #334c3f;
-  background: #334c3f;
-  box-shadow: 0 6px 16px rgba(38, 56, 47, 0.16);
+  color: var(--ink);
+  border-color: #cbd2cc;
+  background: var(--surface-selected);
+  box-shadow: 0 3px 10px var(--shadow-soft);
 }
 
 .publishButton:active,
 .templateCard:active,
 .themeColorTabs button:active,
 .settingsPanelTabs button:active,
-.previewSwitch button:active,
 .editorTabs button:active,
 .chipGrid button:active,
 .presetGrid button:active,
@@ -309,19 +312,19 @@ textarea:focus-visible {
   border: 0;
   background: transparent;
   font-size: var(--text-ui);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
 }
 
 .settingsPanelTabs button:hover,
 .settingsPanelTabs button.active {
-  color: var(--ink);
+  color: var(--ink-secondary);
   background: transparent;
   box-shadow: none;
 }
 
 .settingsPanelTabs button::after {
   content: "";
-  height: 2px;
+  height: 1px;
   position: absolute;
   right: 0;
   bottom: -1px;
@@ -373,9 +376,10 @@ textarea:focus-visible {
 }
 
 .markdownPaneHeader strong {
-  color: var(--ink);
+  color: var(--ink-secondary);
   font-size: var(--text-body);
   line-height: 1.3;
+  font-weight: var(--weight-medium);
 }
 
 .markdownPaneHeader > div:first-child span {
@@ -408,7 +412,7 @@ textarea:focus-visible {
 
 .draftSaveStatus.isFailed {
   color: #a03d35;
-  font-weight: 700;
+  font-weight: var(--weight-medium);
 }
 
 .markdownPaneStatus button {
@@ -422,11 +426,11 @@ textarea:focus-visible {
   border-radius: var(--radius-control);
   background: transparent;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--weight-medium);
 }
 
 .markdownPaneStatus button:hover {
-  color: var(--ink);
+  color: var(--ink-secondary);
   border-color: var(--line-strong);
   background: var(--surface-selected);
 }
@@ -440,7 +444,7 @@ textarea:focus-visible {
   overflow-x: auto;
   overflow-y: hidden;
   border-bottom: 1px solid var(--line);
-  background: #f8f9f6;
+  background: var(--panel);
   scrollbar-width: none;
 }
 
@@ -463,7 +467,7 @@ textarea:focus-visible {
 }
 
 .markdownToolbar button:hover {
-  color: var(--ink);
+  color: var(--ink-secondary);
   background: var(--surface-selected);
 }
 
@@ -509,7 +513,7 @@ textarea:focus-visible {
   height: 52px;
   position: relative;
   border-radius: 999px;
-  background: var(--accent);
+  background: var(--line-strong);
   opacity: 0;
   transition:
     height 160ms ease,
@@ -525,33 +529,33 @@ textarea:focus-visible {
 
 .settingsHeader h2 {
   margin: 0;
-  color: var(--ink);
+  color: var(--ink-secondary);
   font-size: var(--text-title);
   line-height: 1.25;
-  font-weight: 700;
+  font-weight: var(--weight-medium);
 }
 
 .panelEyebrow {
   color: var(--muted);
   font-size: 10px;
   line-height: 1.2;
-  font-weight: 700;
+  font-weight: var(--weight-medium);
   letter-spacing: 0.14em;
 }
 
-.themeAppearanceSwitch {
-  min-height: 40px;
+.previewAppearanceSwitch {
+  min-height: 36px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
-  margin: 12px 12px 4px;
-  padding: 4px;
+  flex: 0 0 auto;
+  gap: 3px;
+  padding: 3px;
   border: 1px solid var(--line);
-  border-radius: 11px;
+  border-radius: 10px;
   background: var(--surface-subtle);
 }
 
-.themeAppearanceSwitch button,
+.previewAppearanceSwitch button,
 .mobileAppearanceSwitch button {
   min-width: 0;
   display: inline-flex;
@@ -561,67 +565,51 @@ textarea:focus-visible {
   color: var(--muted);
   border: 0;
   background: transparent;
-  font-weight: 650;
+  font-weight: var(--weight-medium);
 }
 
-.themeAppearanceSwitch button {
+.previewAppearanceSwitch button {
+  min-width: 66px;
   min-height: 30px;
+  padding: 0 9px;
   border-radius: 8px;
   font-size: var(--text-caption);
 }
 
-.themeAppearanceSwitch button:hover,
-.themeAppearanceSwitch button.active,
+.previewAppearanceSwitch button:hover,
+.previewAppearanceSwitch button.active,
 .mobileAppearanceSwitch button:hover,
 .mobileAppearanceSwitch button.active {
-  color: var(--ink);
+  color: var(--ink-secondary);
   background: var(--surface);
-  box-shadow: 0 1px 3px var(--shadow-soft);
+  box-shadow: 0 1px 2px var(--shadow-soft);
 }
 
-.themeAppearanceSwitch button.active i,
+.previewAppearanceSwitch button.active i,
 .mobileAppearanceSwitch button.active i {
-  color: var(--accent);
+  color: var(--ink-secondary);
 }
 
 .themeColorTabs {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 5px;
-  margin: 4px 12px 9px;
-}
-
-.themeSearch {
-  min-height: 38px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 12px 12px;
-  padding: 0 11px;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-}
-
-.themeSearch i {
-  flex: 0 0 auto;
-  font-size: 15px;
-}
-
-.themeSearch input {
   min-width: 0;
-  width: 100%;
-  border: 0;
-  outline: 0;
-  color: var(--ink-secondary);
-  background: transparent;
-  font-size: var(--text-caption);
+  display: flex;
+  gap: 4px;
+  margin: 9px 10px 7px;
+  padding-bottom: 2px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  scroll-snap-type: x proximity;
 }
 
-.themeSearch:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+.themeColorTabs::-webkit-scrollbar {
+  height: 3px;
+}
+
+.themeColorTabs::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--line-strong);
 }
 
 .emptyThemeResult {
@@ -633,25 +621,27 @@ textarea:focus-visible {
 }
 
 .themeColorTabs button {
-  min-width: 0;
+  min-width: 42px;
+  flex: 0 0 auto;
   min-height: 30px;
-  padding: 0 5px;
+  padding: 0 8px;
   overflow: hidden;
   color: var(--muted);
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
   font-size: var(--text-caption);
-  font-weight: 600;
+  font-weight: var(--weight-regular);
   text-overflow: ellipsis;
   white-space: nowrap;
+  scroll-snap-align: start;
 }
 
 .themeColorTabs button:hover,
 .themeColorTabs button.active {
-  color: var(--accent-strong);
+  color: var(--ink-secondary);
   border-color: transparent;
-  background: var(--accent-soft);
+  background: var(--surface-selected);
 }
 
 .templateList {
@@ -664,7 +654,7 @@ textarea:focus-visible {
   padding: 0 12px 18px;
   overflow: auto;
   scrollbar-width: thin;
-  scrollbar-color: #d0d0d0 transparent;
+  scrollbar-color: var(--line-strong) transparent;
 }
 
 .creatorFooter {
@@ -696,7 +686,7 @@ textarea:focus-visible {
 
 .creatorFooter a:hover,
 .creatorFooter button:hover {
-  color: var(--ink);
+  color: var(--ink-secondary);
 }
 
 .creatorFooter a:focus-visible,
@@ -723,19 +713,20 @@ textarea:focus-visible {
   text-align: center;
   border: 1px solid var(--line);
   border-radius: var(--radius-card);
-  background: var(--surface);
-  box-shadow: 0 1px 2px rgba(38, 56, 47, 0.035);
+  background: rgba(251, 252, 251, 0.72);
+  box-shadow: 0 1px 2px var(--shadow-soft);
 }
 
 .templateCard:hover {
-  border-color: #bfc8c0;
-  box-shadow: 0 7px 18px rgba(38, 56, 47, 0.08);
-  transform: translateY(-1px);
+  border-color: var(--line-strong);
+  background: var(--surface);
+  box-shadow: 0 3px 10px var(--shadow-soft);
 }
 
 .templateCard.isSelected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  border-color: #c7cec8;
+  background: var(--surface);
+  box-shadow: 0 0 0 1px rgba(111, 125, 116, 0.1);
 }
 
 .templatePalette {
@@ -744,6 +735,17 @@ textarea:focus-visible {
   padding: 12px 11px 9px;
   position: relative;
   border-bottom: 1px solid rgba(40, 42, 41, 0.1);
+  filter: saturate(0.38) contrast(0.9);
+  opacity: 0.78;
+  transition:
+    filter var(--duration-fast) ease,
+    opacity var(--duration-fast) ease;
+}
+
+.templateCard:hover .templatePalette,
+.templateCard.isSelected .templatePalette {
+  filter: saturate(0.5) contrast(0.92);
+  opacity: 0.86;
 }
 
 .templatePalette strong {
@@ -751,7 +753,7 @@ textarea:focus-visible {
   margin-bottom: 7px;
   font-family: var(--font-brand);
   font-size: 23px;
-  font-weight: 700;
+  font-weight: var(--weight-medium);
   line-height: 1;
   text-align: left;
 }
@@ -784,9 +786,9 @@ textarea:focus-visible {
   display: grid;
   place-items: center;
   padding: 7px 5px;
-  color: var(--ink);
+  color: var(--ink-secondary);
   font-size: 11px;
-  font-weight: 500;
+  font-weight: var(--weight-regular);
   line-height: 1.3;
   overflow-wrap: anywhere;
 }
@@ -799,9 +801,10 @@ textarea:focus-visible {
   position: absolute;
   top: 7px;
   right: 7px;
-  color: #fff;
+  color: var(--ink-secondary);
+  border: 1px solid var(--line-strong);
   border-radius: 50%;
-  background: var(--accent-strong);
+  background: rgba(251, 252, 251, 0.92);
   font-size: 12px;
 }
 
@@ -843,6 +846,8 @@ textarea:focus-visible {
   border: 2px solid #fff;
   border-radius: 50%;
   box-shadow: 0 0 0 1px #cfcfcf;
+  filter: saturate(0.45);
+  opacity: 0.78;
 }
 
 .documentMeta div {
@@ -851,9 +856,9 @@ textarea:focus-visible {
 
 .documentMeta strong {
   display: block;
-  color: var(--ink);
+  color: var(--ink-secondary);
   font-size: var(--text-ui);
-  font-weight: 650;
+  font-weight: var(--weight-medium);
   line-height: 1.35;
 }
 
@@ -872,40 +877,8 @@ textarea:focus-visible {
   margin-bottom: 2px;
   color: var(--muted);
   font-size: 10px;
-  font-weight: 600;
+  font-weight: var(--weight-regular);
   letter-spacing: 0.08em;
-}
-
-.previewSwitch {
-  flex: 0 0 auto;
-  padding: 3px;
-  border: 0;
-  border-radius: 10px;
-  background: var(--surface-subtle);
-}
-
-.previewSwitch button {
-  min-height: 34px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px;
-  color: var(--muted);
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  font-size: var(--text-caption);
-  font-weight: 600;
-}
-
-.previewSwitch button.active {
-  color: var(--ink);
-  background: var(--surface);
-  box-shadow: 0 1px 3px var(--shadow-soft);
-}
-
-.previewSwitch button.active i {
-  color: var(--accent);
 }
 
 .articleImageNoticeSlot:empty {
@@ -919,9 +892,9 @@ textarea:focus-visible {
   align-items: center;
   gap: 11px;
   padding: 10px 16px;
-  color: #35410f;
-  border-bottom: 1px solid rgba(124, 145, 38, 0.2);
-  background: #f5f8e9;
+  color: var(--ink-secondary);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-subtle);
 }
 
 .articleImageNotice > i {
@@ -944,7 +917,7 @@ textarea:focus-visible {
 
 .articleImageNotice > div > span {
   margin-top: 2px;
-  color: #667142;
+  color: var(--muted);
   font-size: var(--text-caption);
   line-height: 1.45;
 }
@@ -956,17 +929,17 @@ textarea:focus-visible {
   justify-content: center;
   gap: 6px;
   padding: 0 11px;
-  color: #283008;
-  border: 1px solid rgba(75, 91, 18, 0.28);
+  color: var(--ink-secondary);
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.82);
   font-size: var(--text-caption);
-  font-weight: 700;
+  font-weight: var(--weight-medium);
 }
 
 .articleImageNotice button:hover {
-  border-color: rgba(75, 91, 18, 0.46);
-  background: #fff;
+  border-color: #cbd2cc;
+  background: var(--surface);
 }
 
 .articleImageNotice.isResolving {
@@ -985,21 +958,232 @@ textarea:focus-visible {
 
 .stageCanvas {
   min-height: 0;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
   position: relative;
-  overflow: auto;
-  padding: 24px 34px 72px;
+  overflow: hidden;
+  padding: 16px;
   background: var(--canvas);
-  scrollbar-width: thin;
-  scrollbar-color: #c1c1c1 transparent;
 }
 
 .previewBoard {
-  width: min(100%, 720px);
-  min-height: calc(100vh - 188px);
-  margin: 0 auto;
+  width: 100%;
+  min-height: 100%;
   position: relative;
   z-index: var(--layer-content);
   background: transparent;
+}
+
+.phonePreview {
+  --phone-surface: #ffffff;
+  --phone-header-surface: #ffffff;
+  --phone-primary-text: #181a19;
+  --phone-secondary-text: #8a908c;
+  --phone-divider: #ededed;
+  --phone-action-text: #576b95;
+  --phone-action-border: #d9dfe9;
+  --phone-status-pill: #090a09;
+  --phone-brand-tile: #202521;
+  --phone-brand-border: transparent;
+  --phone-scrollbar: #c7cbc8;
+  width: min(100%, 391px);
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+  position: relative;
+  z-index: var(--layer-content);
+  overflow: hidden;
+  border: 8px solid #171a18;
+  border-radius: 36px;
+  background: #171a18;
+  box-shadow:
+    0 2px 3px rgba(22, 26, 24, 0.18),
+    0 20px 48px rgba(22, 26, 24, 0.22);
+  color-scheme: light;
+}
+
+.phonePreview[data-preview-appearance="dark"] {
+  --phone-surface: #101311;
+  --phone-header-surface: #151816;
+  --phone-primary-text: #f2f5f3;
+  --phone-secondary-text: #a4aca7;
+  --phone-divider: #2d332f;
+  --phone-action-text: #aec2ee;
+  --phone-action-border: #4b5871;
+  --phone-status-pill: #030403;
+  --phone-brand-tile: #242925;
+  --phone-brand-border: #3b423d;
+  --phone-scrollbar: #4b534e;
+  color-scheme: dark;
+}
+
+.phoneScreen {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 28px 44px minmax(0, 1fr) 18px;
+  overflow: hidden;
+  border-radius: 27px;
+  background: var(--phone-surface);
+}
+
+.phoneStatusBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px 0 18px;
+  position: relative;
+  z-index: 2;
+  color: var(--phone-primary-text);
+  background: var(--phone-surface);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.phoneStatusBar::after {
+  content: "";
+  width: 72px;
+  height: 18px;
+  position: absolute;
+  top: 5px;
+  left: 50%;
+  border-radius: 999px;
+  background: var(--phone-status-pill);
+  transform: translateX(-50%);
+}
+
+.phoneStatusIcons {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+}
+
+.phoneStatusIcons i {
+  font-size: 13px;
+}
+
+.wechatPreviewHeader {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  border-bottom: 1px solid var(--phone-divider);
+  color: var(--phone-primary-text);
+  background: var(--phone-header-surface);
+  font-family: var(--font-ui);
+}
+
+.wechatPreviewHeader strong {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.wechatPreviewHeader strong i {
+  color: #07c160;
+  font-size: 16px;
+}
+
+.wechatPreviewHeaderSide {
+  height: 44px;
+  display: grid;
+  place-items: center;
+  font-size: 21px;
+}
+
+.wechatPreviewHeaderSide.isEnd {
+  font-size: 20px;
+}
+
+.phonePreviewViewport {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--phone-surface);
+  scrollbar-width: thin;
+  scrollbar-color: var(--phone-scrollbar) transparent;
+}
+
+.phonePreviewViewport:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.wechatPublisherBar {
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 16px;
+  color: var(--phone-primary-text);
+  border-bottom: 1px solid var(--phone-divider);
+  background: var(--phone-header-surface);
+  font-family: var(--font-ui);
+}
+
+.wechatPublisherBar img {
+  width: 34px;
+  height: 34px;
+  padding: 5px;
+  border-radius: 9px;
+  border: 1px solid var(--phone-brand-border);
+  background: var(--phone-brand-tile);
+}
+
+.wechatPublisherBar > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.wechatPublisherBar strong {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wechatPublisherBar small {
+  color: var(--phone-secondary-text);
+  font-size: 9px;
+  line-height: 1.25;
+}
+
+.wechatPublisherBar em {
+  padding: 4px 9px;
+  color: var(--phone-action-text);
+  border: 1px solid var(--phone-action-border);
+  border-radius: 999px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.phoneHomeIndicator {
+  display: grid;
+  place-items: center;
+  background: var(--phone-surface);
+}
+
+.phoneHomeIndicator span {
+  width: 104px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--phone-primary-text);
 }
 
 .themeRevealOverlay {
@@ -1105,7 +1289,7 @@ textarea:focus-visible {
   width: 100%;
   min-height: 100%;
   overflow: hidden;
-  background: #fff;
+  background: var(--phone-surface, #fff);
   border: 1px solid rgba(203, 209, 202, 0.72);
   border-radius: 4px;
   box-shadow:
@@ -1127,22 +1311,13 @@ textarea:focus-visible {
   white-space: pre-wrap;
 }
 
-.stageCanvas.isMobilePreview {
-  padding-top: 28px;
+.stageCanvas .articleFrame {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
-.stageCanvas.isMobilePreview .previewBoard {
-  width: min(390px, 100%);
-  min-height: 760px;
-}
-
-.stageCanvas.isMobilePreview .articleFrame {
-  border: 1px solid var(--line-strong);
-  border-radius: 18px;
-  box-shadow: 0 20px 52px rgba(38, 56, 47, 0.14);
-}
-
-.stageCanvas.isMobilePreview .articleFrame > section {
+.stageCanvas .articleFrame > section {
   max-width: 100% !important;
   padding-left: 20px !important;
   padding-right: 20px !important;
@@ -1157,10 +1332,10 @@ textarea:focus-visible {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  color: var(--accent-strong);
-  border: 2px dashed var(--accent);
+  color: var(--ink-secondary);
+  border: 2px dashed var(--line-strong);
   border-radius: 14px;
-  background: rgba(245, 245, 243, 0.96);
+  background: rgba(248, 249, 247, 0.96);
   opacity: 0;
   pointer-events: none;
   transition: opacity 140ms ease;
@@ -1173,9 +1348,9 @@ textarea:focus-visible {
 }
 
 .dropOverlay strong {
-  color: var(--ink);
+  color: var(--ink-secondary);
   font-size: var(--text-body);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
 }
 
 .dropOverlay span {
@@ -1191,7 +1366,7 @@ textarea:focus-visible {
 .settingsHeader {
   flex: 0 0 auto;
   border-bottom: 1px solid var(--line);
-  background: rgba(255, 255, 253, 0.52);
+  background: rgba(250, 251, 249, 0.52);
 }
 
 .styleSettingsActions {
@@ -1216,7 +1391,7 @@ textarea:focus-visible {
 .resetStyleButton {
   padding: 0 10px;
   font-size: var(--text-caption);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
 }
 
 .dialogClose {
@@ -1226,9 +1401,9 @@ textarea:focus-visible {
 
 .resetStyleButton:hover,
 .dialogClose:hover {
-  color: var(--accent-strong);
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  color: var(--ink-secondary);
+  border-color: var(--line-strong);
+  background: var(--surface-selected);
 }
 
 .editorTabs {
@@ -1257,13 +1432,13 @@ textarea:focus-visible {
 }
 
 .editorTabs button.active {
-  color: var(--ink);
+  color: var(--ink-secondary);
   background: var(--surface);
   box-shadow: 0 1px 3px var(--shadow-soft);
 }
 
 .editorTabs button.active i {
-  color: var(--accent);
+  color: var(--ink-secondary);
 }
 
 .editorTabs i {
@@ -1273,7 +1448,7 @@ textarea:focus-visible {
 .editorTabs strong {
   overflow: hidden;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--weight-medium);
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1307,15 +1482,15 @@ textarea:focus-visible {
   border-radius: 8px;
   background: var(--surface);
   font-size: var(--text-caption);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
 }
 
 .chipGrid button:hover,
 .chipGrid button.active,
 .presetGrid button:hover {
-  color: var(--accent-strong);
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  color: var(--ink-secondary);
+  border-color: var(--line-strong);
+  background: var(--surface-selected);
 }
 
 .editorSection {
@@ -1328,7 +1503,7 @@ textarea:focus-visible {
   margin: 0;
   color: var(--ink-secondary);
   font-size: var(--text-ui);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
   line-height: 1.4;
 }
 
@@ -1339,7 +1514,7 @@ textarea:focus-visible {
   border: 1px solid var(--line);
   border-radius: var(--radius-card);
   background: var(--surface);
-  box-shadow: 0 1px 2px rgba(38, 56, 47, 0.025);
+  box-shadow: 0 1px 2px var(--shadow-soft);
 }
 
 .controlRow {
@@ -1350,7 +1525,7 @@ textarea:focus-visible {
   gap: 6px;
   color: var(--ink-secondary);
   font-size: var(--text-caption);
-  font-weight: 600;
+  font-weight: var(--weight-regular);
 }
 
 .controlRow > span {
@@ -1383,7 +1558,7 @@ textarea:focus-visible {
   border: 2px solid var(--surface);
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 0 1px rgba(71, 100, 84, 0.18);
+  box-shadow: 0 0 0 1px rgba(95, 111, 101, 0.16);
   transition:
     transform 120ms ease,
     box-shadow 120ms ease;
@@ -1414,7 +1589,7 @@ textarea:focus-visible {
   border: 2px solid var(--surface);
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 0 1px rgba(71, 100, 84, 0.18);
+  box-shadow: 0 0 0 1px rgba(95, 111, 101, 0.16);
   transition:
     transform 120ms ease,
     box-shadow 120ms ease;
@@ -1484,8 +1659,8 @@ textarea:focus-visible {
 
 .buttonGroup button:hover,
 .buttonGroup button.active {
-  color: var(--accent-strong);
-  background: var(--accent-soft);
+  color: var(--ink-secondary);
+  background: var(--surface-selected);
 }
 
 .toggleControl {
@@ -1547,7 +1722,7 @@ textarea:focus-visible {
   margin-bottom: 10px;
   color: var(--muted);
   font-size: var(--text-caption);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
 }
 
 .emptyHint {
@@ -1566,7 +1741,7 @@ textarea:focus-visible {
 .decorationEnable > strong {
   color: var(--ink-secondary);
   font-size: var(--text-caption);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
 }
 
 .boardPresetGrid {
@@ -1586,13 +1761,13 @@ textarea:focus-visible {
   border-radius: 10px;
   background: var(--surface);
   font-size: var(--text-caption);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
 }
 
 .boardPresetGrid button.active {
-  color: var(--accent-strong);
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  color: var(--ink-secondary);
+  border-color: var(--line-strong);
+  background: var(--surface-selected);
 }
 
 .miniPattern {
@@ -1621,7 +1796,7 @@ textarea:focus-visible {
   width: min(660px, 100%);
   max-height: calc(100vh - 48px);
   overflow: auto;
-  color: var(--ink);
+  color: var(--ink-secondary);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-panel);
   outline: none;
@@ -1639,10 +1814,10 @@ textarea:focus-visible {
 
 .supportDialog h2 {
   margin: 0;
-  color: var(--ink);
+  color: var(--ink-secondary);
   font-size: var(--text-dialog-title);
   line-height: 1.35;
-  font-weight: 700;
+  font-weight: var(--weight-semibold);
 }
 
 .supportDialog header p {
@@ -1687,7 +1862,7 @@ textarea:focus-visible {
   margin-top: 10px;
   color: var(--ink-secondary);
   font-size: var(--text-ui);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
 }
 
 .supportQrGrid figcaption i {
@@ -1719,12 +1894,12 @@ textarea:focus-visible {
   gap: 5px;
   color: var(--ink-secondary);
   font-size: var(--text-caption);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
   text-decoration: none;
 }
 
 .supportDialogFooter a:hover {
-  color: var(--ink);
+  color: var(--ink-secondary);
 }
 
 .clipboardConsentBackdrop {
@@ -1734,7 +1909,7 @@ textarea:focus-visible {
 .clipboardConsentDialog {
   width: min(470px, 100%);
   overflow: hidden;
-  color: var(--ink);
+  color: var(--ink-secondary);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-panel);
   outline: none;
@@ -1754,7 +1929,7 @@ textarea:focus-visible {
   height: 40px;
   display: grid;
   place-items: center;
-  color: var(--ink);
+  color: var(--ink-secondary);
   border: 1px solid var(--line);
   border-radius: 11px;
   background: var(--surface-selected);
@@ -1763,9 +1938,10 @@ textarea:focus-visible {
 
 .clipboardConsentDialog h2 {
   margin: 0;
-  color: var(--ink);
+  color: var(--ink-secondary);
   font-size: var(--text-title);
   line-height: 1.35;
+  font-weight: var(--weight-semibold);
 }
 
 .clipboardConsentDialog header p {
@@ -1788,7 +1964,7 @@ textarea:focus-visible {
   padding: 0 15px;
   border-radius: 8px;
   font-size: var(--text-ui);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
 }
 
 .dialogCancel {
@@ -1818,7 +1994,7 @@ textarea:focus-visible {
   background: rgba(32, 35, 33, 0.96);
   box-shadow: 0 16px 36px rgba(25, 27, 26, 0.2);
   font-size: var(--text-ui);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
 }
 
 .toast.hasAction {
@@ -1846,7 +2022,7 @@ textarea:focus-visible {
   border-radius: 8px;
   background: rgba(250, 250, 249, 0.96);
   font-size: var(--text-caption);
-  font-weight: 700;
+  font-weight: var(--weight-medium);
 }
 
 .toast.hasAction button:hover {
@@ -1926,9 +2102,6 @@ textarea:focus-visible {
     padding: 0 14px;
   }
 
-  .previewSwitch button span {
-    display: none;
-  }
 }
 
 @media (max-width: 860px) and (min-width: 721px) {
@@ -1947,10 +2120,6 @@ textarea:focus-visible {
 
   .creatorFooter span {
     display: none;
-  }
-
-  .themeColorTabs {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .templateList {
@@ -2027,7 +2196,6 @@ textarea:focus-visible {
     background: #fff;
   }
 
-  .themeSearch input,
   .valueInput,
   .wideInput {
     font-size: var(--text-subtitle);
@@ -2081,7 +2249,7 @@ textarea:focus-visible {
 
   .mobileHeaderActions a:hover,
   .mobileHeaderActions button:hover {
-    color: var(--ink);
+    color: var(--ink-secondary);
     border-color: var(--line);
     background: var(--surface-selected);
   }
@@ -2133,7 +2301,7 @@ textarea:focus-visible {
   .mobileShareSheet {
     width: 100%;
     padding: 20px 18px calc(18px + env(safe-area-inset-bottom));
-    color: var(--ink);
+    color: var(--ink-secondary);
     border: 1px solid var(--line-strong);
     border-bottom: 0;
     border-radius: 19px 19px 0 0;
@@ -2152,9 +2320,10 @@ textarea:focus-visible {
 
   .mobileShareSheet h2 {
     margin: 0;
-    color: var(--ink);
+    color: var(--ink-secondary);
     font-size: 19px;
     line-height: 1.35;
+    font-weight: var(--weight-semibold);
   }
 
   .mobileShareSheet header p {
@@ -2207,7 +2376,7 @@ textarea:focus-visible {
     height: 38px;
     display: grid;
     place-items: center;
-    color: var(--ink);
+    color: var(--ink-secondary);
     border: 1px solid var(--line);
     border-radius: 11px;
     background: var(--surface);
@@ -2223,7 +2392,7 @@ textarea:focus-visible {
 
   .mobileShareOptions strong {
     overflow: hidden;
-    color: var(--ink);
+    color: var(--ink-secondary);
     font-size: 12px;
     line-height: 1.4;
     text-overflow: ellipsis;
@@ -2314,23 +2483,50 @@ textarea:focus-visible {
     overflow: visible;
   }
 
-  .stageCanvas,
-  .stageCanvas.isMobilePreview {
+  .stageCanvas {
     min-height: 0;
+    display: block;
     overflow: visible;
     padding: 0;
     background: #fff;
   }
 
-  .previewBoard,
-  .stageCanvas.isMobilePreview .previewBoard {
+  .phonePreview {
+    width: 100%;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: #fff;
+    box-shadow: none;
+  }
+
+  .phoneScreen {
+    height: auto;
+    display: block;
+    overflow: visible;
+    border-radius: 0;
+  }
+
+  .phoneStatusBar,
+  .wechatPreviewHeader,
+  .wechatPublisherBar,
+  .phoneHomeIndicator {
+    display: none;
+  }
+
+  .phonePreviewViewport {
+    overflow: visible;
+  }
+
+  .previewBoard {
     width: 100%;
     min-height: 0;
     margin: 0;
   }
 
-  .articleFrame,
-  .stageCanvas.isMobilePreview .articleFrame {
+  .articleFrame {
     min-height: 0;
     overflow: visible;
     border: 0;
@@ -2338,8 +2534,7 @@ textarea:focus-visible {
     box-shadow: none;
   }
 
-  .articleFrame > section,
-  .stageCanvas.isMobilePreview .articleFrame > section {
+  .articleFrame > section {
     width: 100% !important;
     max-width: none !important;
     margin: 0 !important;
@@ -2367,11 +2562,11 @@ textarea:focus-visible {
     z-index: var(--layer-mobile-dock);
     padding: 7px;
     overflow: hidden;
-    color: var(--ink);
-    border: 1px solid rgba(203, 209, 202, 0.88);
+    color: var(--ink-secondary);
+    border: 1px solid var(--line-strong);
     border-radius: 17px;
-    background: rgba(255, 255, 253, 0.94);
-    box-shadow: 0 16px 42px rgba(38, 56, 47, 0.16);
+    background: rgba(250, 251, 249, 0.94);
+    box-shadow: 0 16px 42px var(--shadow-raised);
     backdrop-filter: blur(20px);
   }
 
@@ -2411,10 +2606,10 @@ textarea:focus-visible {
 
   .mobileThemeDock header strong {
     overflow: hidden;
-    color: var(--ink);
+    color: var(--ink-secondary);
     font-size: 11px;
     line-height: 1.35;
-    font-weight: 650;
+    font-weight: var(--weight-medium);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -2467,7 +2662,7 @@ textarea:focus-visible {
     border-radius: 10px;
     background: transparent;
     font-size: 11px;
-    font-weight: 600;
+    font-weight: var(--weight-regular);
     white-space: nowrap;
   }
 
@@ -2481,9 +2676,9 @@ textarea:focus-visible {
   }
 
   .mobileThemeRail button[aria-current="true"] {
-    color: var(--accent-strong);
+    color: var(--ink-secondary);
     border-color: transparent;
-    background: var(--accent-soft);
+    background: var(--surface-selected);
   }
 
   .toast {

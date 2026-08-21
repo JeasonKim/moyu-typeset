@@ -63,8 +63,11 @@ import {
   type PreviewReadingBlockGeometry,
 } from './domain/preview-reading-anchor';
 import { coordinateThemeRevealTransition } from './domain/theme-reveal-transition';
-import { filterThemesByQuery } from './domain/theme-search';
-import { selectPreviewTheme } from './domain/theme-selection';
+import {
+  resolveThemeCardSelection,
+  selectPreviewTheme,
+  type ThemeCardActivation,
+} from './domain/theme-selection';
 import {
   applyThemeAppearance,
   resolveThemeAppearancePreview,
@@ -102,7 +105,6 @@ import {
   type MarkdownEditorScrollMetrics,
 } from './infrastructure/browser-markdown-editor';
 
-type PreviewDevice = 'desktop' | 'mobile';
 type PreviewRevealPhase = 'idle' | 'brand-loading' | 'curtain-opening';
 type PreviewRevealContext = 'theme' | 'article' | null;
 type ToastAction = 'open-wechat-editor';
@@ -224,8 +226,6 @@ const state = {
   markdownSelection: { anchor: 0, head: 0 } as MarkdownEditingSelection,
   markdownScrollTop: 0,
   themeColorFilterId: 'all' as ThemeColorFilterId,
-  themeQuery: '',
-  previewDevice: 'mobile' as PreviewDevice,
   templateListScrollTop: 0,
   previewScrollTop: 0,
   previewScrollLeft: 0,
@@ -332,10 +332,7 @@ function renderApp(): void {
     state.editor.decorationPreferences,
   );
   const renderedPreview = renderPreview(editedTheme);
-  const visibleTemplateThemes = filterThemesByQuery(
-    filterThemesByColor(dataset.themes, state.themeColorFilterId),
-    state.themeQuery,
-  );
+  const visibleTemplateThemes = filterThemesByColor(dataset.themes, state.themeColorFilterId);
 
   app.innerHTML = `
     <main class="appShell">
@@ -389,28 +386,11 @@ function renderApp(): void {
               <div class="documentMeta">
                 <span class="documentDot" style="background: ${escapeAttribute(selectedTheme.palette.primary)}"></span>
                 <div>
-                  <span class="stageEyebrow">实时预览 · ${themeAppearanceLabel(state.themeAppearance)}</span>
+                  <span class="stageEyebrow">实时预览</span>
                   <strong>${escapeHtml(selectedTheme.label)}</strong>
                 </div>
               </div>
-              <div class="previewSwitch" aria-label="预览尺寸">
-                <button
-                  type="button"
-                  class="${state.previewDevice === 'mobile' ? 'active' : ''}"
-                  aria-pressed="${state.previewDevice === 'mobile'}"
-                  data-preview-device="mobile"
-                >
-                  <i class="ti ti-device-mobile"></i><span>手机预览</span>
-                </button>
-                <button
-                  type="button"
-                  class="${state.previewDevice === 'desktop' ? 'active' : ''}"
-                  aria-pressed="${state.previewDevice === 'desktop'}"
-                  data-preview-device="desktop"
-                >
-                  <i class="ti ti-device-desktop"></i><span>桌面预览</span>
-                </button>
-              </div>
+              ${renderThemeAppearanceSwitch('previewAppearanceSwitch')}
             </header>
 
             <div class="articleImageNoticeSlot">
@@ -418,7 +398,7 @@ function renderApp(): void {
             </div>
 
             <div
-              class="stageCanvas ${state.previewDevice === 'mobile' ? 'isMobilePreview' : ''}"
+              class="stageCanvas"
               data-article-drop-zone
               ${state.previewRevealPhase !== 'idle' ? 'aria-busy="true"' : ''}
             >
@@ -427,9 +407,45 @@ function renderApp(): void {
                 <strong>松开后开始排版</strong>
                 <span>Markdown 只在当前页面读取</span>
               </div>
-              <div class="previewBoard">
-                ${renderedPreview}
-              </div>
+              <section
+                class="phonePreview"
+                data-preview-appearance="${state.themeAppearance}"
+                role="region"
+                aria-label="手机中的公众号文章预览"
+              >
+                <div class="phoneScreen">
+                  <div class="phoneStatusBar" aria-hidden="true">
+                    <span>9:41</span>
+                    <span class="phoneStatusIcons">
+                      <span>5G</span><i class="ti ti-wifi"></i><i class="ti ti-battery-4"></i>
+                    </span>
+                  </div>
+                  <header class="wechatPreviewHeader" aria-hidden="true">
+                    <span class="wechatPreviewHeaderSide"><i class="ti ti-chevron-left"></i></span>
+                    <strong><i class="ti ti-brand-wechat"></i>公众号</strong>
+                    <span class="wechatPreviewHeaderSide isEnd"><i class="ti ti-dots"></i></span>
+                  </header>
+                  <div
+                    class="phonePreviewViewport"
+                    data-preview-scroll-surface
+                    tabindex="0"
+                    aria-label="公众号文章内容，可上下滚动"
+                  >
+                    <div class="wechatPublisherBar" aria-hidden="true">
+                      <img src="/moyu-mark.svg" alt="">
+                      <span>
+                        <strong>墨鱼排版</strong>
+                        <small>公众号 · 文章预览</small>
+                      </span>
+                      <em>关注</em>
+                    </div>
+                    <div class="previewBoard">
+                      ${renderedPreview}
+                    </div>
+                  </div>
+                  <div class="phoneHomeIndicator" aria-hidden="true"><span></span></div>
+                </div>
+              </section>
             </div>
             ${renderPreviewRevealOverlay()}
           </section>
@@ -437,7 +453,7 @@ function renderApp(): void {
           <div
             class="workbenchDivider"
             role="separator"
-            aria-label="调整预览区和编辑区宽度"
+            aria-label="调整手机预览区和编辑区宽度"
             aria-orientation="vertical"
             tabindex="0"
             data-resize-workbench
@@ -484,19 +500,25 @@ function bindEvents(): void {
         return;
       }
 
-      if (themeId === state.selectedThemeId || themeId === state.pendingThemeId) {
+      const selection = resolveThemeCardSelection({
+        requestedThemeId: themeId,
+        selectedThemeId: state.selectedThemeId,
+        pendingThemeId: state.pendingThemeId,
+        currentAppearance: state.themeAppearance,
+      });
+      if (selection.kind === 'ignore') {
         return;
       }
 
       if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        activateTheme(themeId);
+        activateTheme(selection.activation);
         renderApp();
         return;
       }
 
       state.pendingThemeId = themeId;
       themeRevealTransition.begin({
-        activateTheme: () => activateTheme(themeId),
+        activateTheme: () => activateTheme(selection.activation),
       });
     });
   });
@@ -524,27 +546,6 @@ function bindEvents(): void {
       state.themeAppearance = appearance;
       persistThemeAppearance(appearance);
       reflectThemeSelectionInUrl(state.selectedThemeId, appearance);
-      renderApp();
-    });
-  });
-
-  app.querySelector<HTMLInputElement>('[data-theme-query]')?.addEventListener('input', (event) => {
-    state.themeQuery = (event.currentTarget as HTMLInputElement).value;
-    state.templateListScrollTop = 0;
-    renderApp();
-    const queryInput = app.querySelector<HTMLInputElement>('[data-theme-query]');
-    queryInput?.focus();
-    queryInput?.setSelectionRange(state.themeQuery.length, state.themeQuery.length);
-  });
-
-  app.querySelectorAll<HTMLButtonElement>('[data-preview-device]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const previewDevice = button.dataset.previewDevice as PreviewDevice;
-      if (previewDevice === state.previewDevice) {
-        return;
-      }
-
-      state.previewDevice = previewDevice;
       renderApp();
     });
   });
@@ -749,7 +750,7 @@ function bindWorkbenchResize(): void {
 }
 
 function bindPreviewScrollSync(): void {
-  const previewSurface = app.querySelector<HTMLElement>('.stageCanvas');
+  const previewSurface = app.querySelector<HTMLElement>('[data-preview-scroll-surface]');
   previewSurface?.addEventListener(
     'scroll',
     () => {
@@ -1290,11 +1291,13 @@ function articleImportFeedback(
   return feedback;
 }
 
-function activateTheme(themeId: string): void {
-  state.selectedThemeId = themeId;
-  normalizeDecorationTarget(requireSelectedTheme(dataset.themes, themeId));
-  persistSelectedTheme(themeId);
-  reflectThemeSelectionInUrl(themeId, state.themeAppearance);
+function activateTheme(activation: ThemeCardActivation): void {
+  state.selectedThemeId = activation.themeId;
+  state.themeAppearance = activation.appearance;
+  normalizeDecorationTarget(requireSelectedTheme(dataset.themes, activation.themeId));
+  persistSelectedTheme(activation.themeId);
+  persistThemeAppearance(activation.appearance);
+  reflectThemeSelectionInUrl(activation.themeId, activation.appearance);
 }
 
 function renderArticleImageNotice(): string {
@@ -1555,7 +1558,7 @@ function synchronizePreviewFromMarkdown(metrics: MarkdownEditorScrollMetrics): v
   if (synchronizedScrollSource === 'preview') {
     return;
   }
-  const previewSurface = app.querySelector<HTMLElement>('.stageCanvas');
+  const previewSurface = app.querySelector<HTMLElement>('[data-preview-scroll-surface]');
   if (!previewSurface) {
     return;
   }
@@ -1679,23 +1682,23 @@ function resolvePreviewReadingSurface(): PreviewReadingSurface | null {
     return resolveMobileReadingSurface();
   }
 
-  const stageCanvas = app.querySelector<HTMLElement>('.stageCanvas');
-  if (!stageCanvas) {
+  const phonePreviewViewport = app.querySelector<HTMLElement>('[data-preview-scroll-surface]');
+  if (!phonePreviewViewport) {
     return null;
   }
 
-  const stageBounds = stageCanvas.getBoundingClientRect();
+  const viewportBounds = phonePreviewViewport.getBoundingClientRect();
   return {
-    root: stageCanvas,
-    viewportTop: stageBounds.top,
-    viewportHeight: stageCanvas.clientHeight,
-    scrollTop: stageCanvas.scrollTop,
-    scrollLeft: stageCanvas.scrollLeft,
+    root: phonePreviewViewport,
+    viewportTop: viewportBounds.top,
+    viewportHeight: phonePreviewViewport.clientHeight,
+    scrollTop: phonePreviewViewport.scrollTop,
+    scrollLeft: phonePreviewViewport.scrollLeft,
     restoreScroll: ({ top, left }) => {
-      stageCanvas.scrollTo({ top, left, behavior: 'instant' });
+      phonePreviewViewport.scrollTo({ top, left, behavior: 'instant' });
     },
     advanceScroll: (distance) => {
-      stageCanvas.scrollTop += distance;
+      phonePreviewViewport.scrollTop += distance;
     },
   };
 }
@@ -1835,27 +1838,16 @@ function renderSettingsPanelNavigation(): string {
 
 function renderTemplatePanel(themes: ThemeDefinition[], selectedTheme: ThemeDefinition): string {
   return `
-    ${renderThemeAppearanceSwitch('themeAppearanceSwitch')}
     <div class="themeColorTabs" aria-label="主题色调">
       ${themeColorFilters
         .map((colorFilter) => renderThemeColorButton(colorFilter.id, colorFilter.label))
         .join('')}
     </div>
-    <label class="themeSearch">
-      <i class="ti ti-search"></i>
-      <input
-        type="search"
-        value="${escapeAttribute(state.themeQuery)}"
-        aria-label="搜索主题名称"
-        placeholder="搜索主题名称"
-        data-theme-query
-      >
-    </label>
     <nav class="templateList" aria-label="可用模板">
       ${
         themes.length > 0
           ? themes.map((theme) => renderThemeTemplateCard(theme, selectedTheme)).join('')
-          : '<p class="emptyThemeResult">没有匹配的主题，换个关键词试试。</p>'
+          : '<p class="emptyThemeResult">当前色调暂无主题。</p>'
       }
     </nav>
     <div class="creatorFooter">
@@ -1871,7 +1863,7 @@ function renderTemplatePanel(themes: ThemeDefinition[], selectedTheme: ThemeDefi
 
 function renderThemeAppearanceSwitch(className: string): string {
   return `
-    <div class="${className}" role="group" aria-label="主题明暗外观">
+    <div class="${className}" role="group" aria-label="预览明暗外观">
       <button
         type="button"
         class="${state.themeAppearance === 'light' ? 'active' : ''}"
@@ -1906,7 +1898,7 @@ function renderThemeColorButton(colorFilterId: ThemeColorFilterId, label: string
 function renderThemeTemplateCard(theme: ThemeDefinition, selectedTheme: ThemeDefinition): string {
   const themeId = theme.value || theme.id;
   const isSelected = themeId === (selectedTheme.value || selectedTheme.id);
-  const paletteSurface = resolveThemeAppearancePreview(theme, state.themeAppearance);
+  const paletteSurface = resolveThemeAppearancePreview(theme, 'light');
   const colorLabels = theme.palette.colorFamilies
     .map((colorFamily) => themeColorFilters.find((filter) => filter.id === colorFamily)?.label)
     .filter((label): label is string => Boolean(label))
@@ -1917,7 +1909,7 @@ function renderThemeTemplateCard(theme: ThemeDefinition, selectedTheme: ThemeDef
       class="templateCard${isSelected ? ' isSelected' : ''}"
       type="button"
       data-theme-id="${escapeAttribute(themeId)}"
-      aria-label="使用${escapeAttribute(theme.label)}主题，外观：${themeAppearanceLabel(state.themeAppearance)}，色调：${escapeAttribute(colorLabels)}"
+      aria-label="使用${escapeAttribute(theme.label)}主题，保持${themeAppearanceLabel(state.themeAppearance)}预览，色调：${escapeAttribute(colorLabels)}"
       aria-current="${isSelected ? 'true' : 'false'}"
       title="${escapeAttribute(theme.label)}"
     >
@@ -1951,7 +1943,7 @@ function renderMobileThemeDock(selectedTheme: ThemeDefinition): string {
           .map((theme) => {
             const themeId = theme.value || theme.id;
             const isSelected = themeId === selectedThemeId;
-            const palette = resolveThemeAppearancePreview(theme, state.themeAppearance);
+            const palette = resolveThemeAppearancePreview(theme, 'light');
             return `
               <button
                 type="button"
@@ -2762,7 +2754,7 @@ function initialMarkdownPaneWidth(): number {
   const approximateWorkbenchWidth = Math.max(720, window.innerWidth - desktopSettingsPanelWidth);
   return constrainMarkdownPaneWidth({
     workbenchWidth: approximateWorkbenchWidth,
-    requestedWidth: Math.round(approximateWorkbenchWidth * 0.38),
+    requestedWidth: Math.round(approximateWorkbenchWidth * 0.58),
     dividerWidth: workbenchDividerWidth,
     minimumMarkdownWidth: minimumMarkdownPaneWidth,
     minimumPreviewWidth: minimumPreviewPaneWidth,

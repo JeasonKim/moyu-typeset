@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { selectPreviewTheme } from './theme-selection';
+import { resolveThemeCardSelection, selectPreviewTheme } from './theme-selection';
 import type { ThemeDefinition, ThemePalette } from './theme-types';
 
 const testPalette: ThemePalette = {
@@ -55,5 +55,58 @@ describe('selectPreviewTheme', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('stored="removed-theme"'));
 
     warn.mockRestore();
+  });
+});
+
+describe('resolveThemeCardSelection', () => {
+  it('selects another theme without changing the current dark appearance', () => {
+    expect(resolveThemeCardSelection({
+      requestedThemeId: 'z-template',
+      selectedThemeId: 'default',
+      pendingThemeId: null,
+      currentAppearance: 'dark',
+    })).toEqual({
+      kind: 'activate',
+      activation: {
+        themeId: 'z-template',
+        appearance: 'dark',
+      },
+    });
+  });
+
+  it('selects another theme without changing the current light appearance', () => {
+    expect(resolveThemeCardSelection({
+      requestedThemeId: 'z-template',
+      selectedThemeId: 'default',
+      pendingThemeId: null,
+      currentAppearance: 'light',
+    })).toEqual({
+      kind: 'activate',
+      activation: {
+        themeId: 'z-template',
+        appearance: 'light',
+      },
+    });
+  });
+
+  it('ignores the selected theme in either appearance and a theme already waiting to activate', () => {
+    expect(resolveThemeCardSelection({
+      requestedThemeId: 'default',
+      selectedThemeId: 'default',
+      pendingThemeId: null,
+      currentAppearance: 'light',
+    })).toEqual({ kind: 'ignore' });
+    expect(resolveThemeCardSelection({
+      requestedThemeId: 'default',
+      selectedThemeId: 'default',
+      pendingThemeId: null,
+      currentAppearance: 'dark',
+    })).toEqual({ kind: 'ignore' });
+    expect(resolveThemeCardSelection({
+      requestedThemeId: 'z-template',
+      selectedThemeId: 'default',
+      pendingThemeId: 'z-template',
+      currentAppearance: 'light',
+    })).toEqual({ kind: 'ignore' });
   });
 });

@@ -7,8 +7,9 @@ describe('styleControlEventNames', () => {
     expect(styleControlEventNames({ tagName: 'input', inputType: 'color' })).toEqual(['input', 'change']);
   });
 
-  it('keeps text and select controls committed on change', () => {
-    expect(styleControlEventNames({ tagName: 'input', inputType: 'text' })).toEqual(['change']);
+  it('previews text and toggle inputs continuously while selects commit immediately', () => {
+    expect(styleControlEventNames({ tagName: 'input', inputType: 'text' })).toEqual(['input', 'change']);
+    expect(styleControlEventNames({ tagName: 'input', inputType: 'checkbox' })).toEqual(['input', 'change']);
     expect(styleControlEventNames({ tagName: 'select' })).toEqual(['change']);
   });
 });

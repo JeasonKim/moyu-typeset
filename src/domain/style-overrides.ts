@@ -48,6 +48,9 @@ export function applyThemeStyleOverrides(
     ...overrides.background.container,
   };
 
+  // 被装饰组件替换的标题继续继承文字面板设置，避免原生块样式与实际渲染组件断开。
+  inheritTextOverridesInReplacementHeadings(nextConfig, overrides.text);
+
   for (const [componentName, styleOverride] of Object.entries(overrides.decorations)) {
     if (Object.keys(styleOverride).length === 0) {
       continue;
@@ -70,6 +73,26 @@ export function applyThemeStyleOverrides(
   applySectionDividerPreference(nextConfig, decorationPreferences, theme.value || theme.id);
 
   return nextTheme;
+}
+
+function inheritTextOverridesInReplacementHeadings(
+  config: ThemeConfig,
+  textOverrides: ThemeStyleOverrides['text'],
+): void {
+  const replacementHeadingTargets = ['h1', 'h2', 'h3'] as const;
+
+  for (const headingTarget of replacementHeadingTargets) {
+    const styleOverride = textOverrides[headingTarget];
+    const rule = config.rules?.[headingTarget];
+    if (!styleOverride || Object.keys(styleOverride).length === 0 || !rule?.replace_original || !rule.decoration) {
+      continue;
+    }
+
+    rule.replacement_text_style = {
+      ...(rule.replacement_text_style ?? {}),
+      ...styleOverride,
+    };
+  }
 }
 
 function applySectionDividerPreference(

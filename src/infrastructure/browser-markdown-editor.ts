@@ -71,18 +71,31 @@ export function mountBrowserMarkdownEditor(input: BrowserMarkdownEditorInput): B
           minHeight: '100%',
           padding: '18px 0 80px',
           caretColor: 'var(--accent-strong)',
+          fontStyle: 'normal',
+          fontWeight: '400',
+          textDecoration: 'none',
         },
         '.cm-line': {
           padding: '0 20px',
+        },
+        '.cm-line span': {
+          color: 'inherit !important',
+          fontFamily: 'inherit !important',
+          fontSize: 'inherit !important',
+          fontStyle: 'inherit !important',
+          fontWeight: 'inherit !important',
+          letterSpacing: 'inherit !important',
+          textDecoration: 'inherit !important',
+          textTransform: 'inherit !important',
         },
         '.cm-gutters': {
           display: 'none',
         },
         '.cm-activeLine': {
-          backgroundColor: 'rgba(71, 100, 84, 0.055)',
+          backgroundColor: 'rgba(95, 111, 101, 0.045)',
         },
         '.cm-selectionBackground, ::selection': {
-          backgroundColor: 'rgba(71, 100, 84, 0.18) !important',
+          backgroundColor: 'rgba(95, 111, 101, 0.16) !important',
         },
         '.cm-cursor, .cm-dropCursor': {
           borderLeftColor: 'var(--accent-strong)',

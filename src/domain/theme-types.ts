@@ -25,6 +25,7 @@ export interface ThemeRule {
   wrap_content?: boolean;
   insert_after?: string[];
   variant?: string;
+  replacement_text_style?: StyleMap;
 }
 
 export interface ThemeConfig {

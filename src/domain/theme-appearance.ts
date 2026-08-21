@@ -4,6 +4,11 @@ import type {
   ThemeComponent,
   ThemeDefinition,
 } from './theme-types';
+import {
+  buildDarkReadingSurface,
+  mapAccentToDarkSurface,
+  mixPerceptualColors,
+} from './perceptual-color';
 import { resolveThemePaletteSurface } from './theme-palette';
 
 export interface ThemeAppearancePreview {
@@ -21,6 +26,7 @@ export interface ThemeAppearanceSelectionInput {
 
 type ThemeColorRole = 'background' | 'foreground' | 'headline' | 'border' | 'divider' | 'accent' | 'shadow';
 type ThemeVariableRoleMap = Map<string, ThemeColorRole>;
+type ThemeSurfacePurpose = 'reading' | 'decorative';
 
 interface RgbColor {
   red: number;
@@ -33,6 +39,11 @@ interface EmphasisPaintPolicy {
   minimumAlpha: number;
   maximumAlpha: number;
   protectForeground: boolean;
+}
+
+interface TemplateSurfaceFrame {
+  tagName: string;
+  backgroundVariables: string[];
 }
 
 const themeAppearanceLabels: Record<ThemeAppearance, string> = {
@@ -53,6 +64,34 @@ const strongEmphasisBorderPolicy: EmphasisPaintPolicy = {
 };
 const minimumEmphasisBandContrast = 1.35;
 const minimumStrongBandTextContrast = 4.6;
+const readingSurfaceTargets = new Set([
+  'container',
+  'p',
+  'blockquote',
+  'td',
+  'th',
+  'listitem',
+  'ol',
+  'ul',
+  'table',
+  'code',
+  'code_pre',
+]);
+const voidTemplateTags = new Set([
+  'area',
+  'base',
+  'br',
+  'col',
+  'embed',
+  'hr',
+  'img',
+  'input',
+  'link',
+  'meta',
+  'source',
+  'track',
+  'wbr',
+]);
 
 export function applyThemeAppearance(
   theme: ThemeDefinition,
@@ -74,7 +113,7 @@ export function applyThemeAppearance(
   const componentStyles = Object.fromEntries(
     Object.entries(config.components ?? {}).map(([name, component]) => [
       name,
-      adaptThemeComponent(component, preview),
+      adaptThemeComponent(name, component, preview),
     ]),
   );
   const contentSurfaces = collectThemeContentSurfaces(blockStyles, componentStyles, preview);
@@ -210,10 +249,7 @@ export function resolveThemeAppearancePreview(
         background: mixColors('#FFFEFC', primary, 0.04),
         foreground: '#242824',
       }
-    : {
-        background: mixColors('#101412', primary, 0.06),
-        foreground: '#EFF3F0',
-      };
+    : buildDarkReadingSurface(primary);
 
   return {
     ...appearanceSurface,
@@ -254,12 +290,18 @@ export function themeAppearanceLabel(appearance: ThemeAppearance): string {
 }
 
 function adaptThemeComponent(
+  componentName: string,
   component: ThemeComponent,
   preview: ThemeAppearancePreview,
 ): ThemeComponent {
   const variableRoles = collectThemeVariableRoles(component);
+  const surfacePurpose = resolveComponentSurfacePurpose(componentName);
   const componentStyle = component.style
-    ? adaptThemeStyle(component.style, preview, variableRoles)
+    ? correctComponentLocalTextContrast(
+        component,
+        adaptThemeStyle(component.style, preview, variableRoles, undefined, surfacePurpose),
+        preview,
+      )
     : component.style;
   const adaptComponentTemplate = (template: string): string => adaptThemeTemplate(template, preview);
 
@@ -283,11 +325,157 @@ function adaptThemeComponent(
   };
 }
 
+function correctComponentLocalTextContrast(
+  component: ThemeComponent,
+  adaptedStyle: StyleMap,
+  preview: ThemeAppearancePreview,
+): StyleMap {
+  if (!component.style) {
+    return adaptedStyle;
+  }
+
+  const textSurfacePairs = collectTemplateTextSurfacePairs(component);
+  const correctedStyle = { ...adaptedStyle };
+  for (const [textVariable, backgroundVariables] of textSurfacePairs) {
+    const currentColor = correctedStyle[textVariable];
+    const sourceColor = component.style[textVariable];
+    if (typeof currentColor !== 'string' || typeof sourceColor !== 'string') {
+      continue;
+    }
+
+    const localSurfaces = [...backgroundVariables]
+      .map((backgroundVariable) => correctedStyle[backgroundVariable])
+      .filter((surface): surface is string => typeof surface === 'string')
+      .map((surface) => compositeSolidColor(surface, preview.background))
+      .filter((surface): surface is string => Boolean(surface));
+    if (localSurfaces.length === 0) {
+      continue;
+    }
+
+    const currentParsedColor = parseCssColor(currentColor);
+    const sourceParsedColor = parseCssColor(sourceColor);
+    if (!currentParsedColor || !sourceParsedColor) {
+      continue;
+    }
+
+    const candidates = [
+      rgbToHex(currentParsedColor),
+      rgbToHex(sourceParsedColor),
+      preview.foreground,
+      '#101311',
+      '#F4F7F5',
+      '#000000',
+      '#FFFFFF',
+    ];
+    const currentMinimumContrast = minimumContrastAcrossSurfaces(candidates[0], localSurfaces);
+    if (currentMinimumContrast >= 4.5) {
+      continue;
+    }
+
+    correctedStyle[textVariable] = candidates.reduce((bestCandidate, candidate) =>
+      minimumContrastAcrossSurfaces(candidate, localSurfaces) >
+          minimumContrastAcrossSurfaces(bestCandidate, localSurfaces)
+        ? candidate
+        : bestCandidate
+    );
+  }
+
+  return correctedStyle;
+}
+
+function collectTemplateTextSurfacePairs(component: ThemeComponent): Map<string, Set<string>> {
+  const pairs = new Map<string, Set<string>>();
+  const templates = [
+    component.template,
+    ...Object.values(component.variants ?? {}).map((variant) => variant.template),
+  ].filter((template): template is string => Boolean(template));
+
+  for (const template of templates) {
+    const surfaceStack: TemplateSurfaceFrame[] = [];
+    for (const tag of template.matchAll(/<\/([a-z][\w-]*)\s*>|<([a-z][\w-]*)\b[^>]*>/gi)) {
+      const closingTagName = tag[1]?.toLowerCase();
+      if (closingTagName) {
+        retireClosedSurfaceFrame(surfaceStack, closingTagName);
+        continue;
+      }
+
+      const tagName = tag[2].toLowerCase();
+      const styleAttribute = tag[0].match(/style="([^"]*)"/i)?.[1] ?? '';
+      const inheritedBackgrounds = surfaceStack.at(-1)?.backgroundVariables ?? [];
+      const localBackgrounds = collectDeclarationVariables(styleAttribute, 'background');
+      const activeBackgrounds = localBackgrounds.length > 0 ? localBackgrounds : inheritedBackgrounds;
+      const textVariables = [
+        ...collectDeclarationVariables(styleAttribute, 'foreground'),
+        ...collectDeclarationVariables(styleAttribute, 'headline'),
+      ];
+
+      for (const textVariable of textVariables) {
+        const storedBackgrounds = pairs.get(textVariable) ?? new Set<string>();
+        for (const backgroundVariable of activeBackgrounds) {
+          storedBackgrounds.add(backgroundVariable);
+        }
+        if (storedBackgrounds.size > 0) {
+          pairs.set(textVariable, storedBackgrounds);
+        }
+      }
+
+      const selfClosing = /\/\s*>$/.test(tag[0]);
+      if (!selfClosing && !voidTemplateTags.has(tagName)) {
+        surfaceStack.push({ tagName, backgroundVariables: activeBackgrounds });
+      }
+    }
+  }
+
+  return pairs;
+}
+
+function retireClosedSurfaceFrame(
+  surfaceStack: TemplateSurfaceFrame[],
+  closingTagName: string,
+): void {
+  for (let index = surfaceStack.length - 1; index >= 0; index -= 1) {
+    if (surfaceStack[index].tagName === closingTagName) {
+      surfaceStack.splice(index);
+      return;
+    }
+  }
+}
+
+function collectDeclarationVariables(styleAttribute: string, role: ThemeColorRole): string[] {
+  const variables = new Set<string>();
+  for (const declaration of styleAttribute.matchAll(/(?:^|;)\s*([\w-]+)\s*:\s*([^;]+)/g)) {
+    const declarationRole = resolveTemplateDeclarationRole(declaration[1], styleAttribute);
+    if (declarationRole !== role) {
+      continue;
+    }
+    for (const placeholder of declaration[2].matchAll(/{{\s*([\w-]+)\s*}}/g)) {
+      variables.add(placeholder[1]);
+    }
+  }
+  return [...variables];
+}
+
+function minimumContrastAcrossSurfaces(color: string, surfaces: string[]): number {
+  return Math.min(...surfaces.map((surface) => colorContrast(color, surface)));
+}
+
+function resolveStyleSurfacePurpose(styleTarget?: string): ThemeSurfacePurpose {
+  return styleTarget && readingSurfaceTargets.has(styleTarget) ? 'reading' : 'decorative';
+}
+
+function resolveComponentSurfacePurpose(componentName: string): ThemeSurfacePurpose {
+  const normalizedName = componentName.toLowerCase().replaceAll('-', '_');
+  return normalizedName.includes('quote') || normalizedName.includes('content_wrap')
+    ? 'reading'
+    : 'decorative';
+}
+
 function adaptThemeStyle(
   style: StyleMap,
   preview: ThemeAppearancePreview,
   variableRoles?: ThemeVariableRoleMap,
   styleTarget?: string,
+  surfacePurpose = resolveStyleSurfacePurpose(styleTarget),
 ): StyleMap {
   const adaptedStyle = Object.fromEntries(
     Object.entries(style).map(([property, value]) => {
@@ -296,7 +484,9 @@ function adaptThemeStyle(
       }
 
       const colorRole = variableRoles?.get(property) ?? resolveStyleColorRole(property, styleTarget);
-      return colorRole ? [property, adaptColorTokens(value, colorRole, preview)] : [property, value];
+      return colorRole
+        ? [property, adaptColorTokens(value, colorRole, preview, surfacePurpose)]
+        : [property, value];
     }),
   );
 
@@ -610,14 +800,19 @@ function adaptColorTokens(
   value: string,
   role: ThemeColorRole,
   preview: ThemeAppearancePreview,
+  surfacePurpose: ThemeSurfacePurpose,
 ): string {
-  return value.replace(colorTokenPattern, (token) => adaptColorToken(token, role, preview));
+  return value.replace(
+    colorTokenPattern,
+    (token) => adaptColorToken(token, role, preview, surfacePurpose),
+  );
 }
 
 function adaptColorToken(
   token: string,
   role: ThemeColorRole,
   preview: ThemeAppearancePreview,
+  surfacePurpose: ThemeSurfacePurpose = 'decorative',
 ): string {
   const sourceColor = parseCssColor(token);
   if (!sourceColor) {
@@ -630,12 +825,34 @@ function adaptColorToken(
 
   if (role === 'background') {
     adaptedHex = isChromatic(sourceColor)
-      ? mixColors(sourceHex, preview.background, appearance === 'dark' ? 0.72 : 0.82)
-      : mixColors(preview.background, preview.foreground, appearance === 'dark' ? 0.08 : 0.035);
+      ? mixAppearanceColors(
+          sourceHex,
+          preview.background,
+          appearance === 'dark'
+            ? surfacePurpose === 'reading' ? 0.72 : 0.48
+            : 0.82,
+          appearance,
+        )
+      : mixAppearanceColors(
+          preview.background,
+          preview.foreground,
+          appearance === 'dark' ? 0.08 : 0.035,
+          appearance,
+        );
   } else if (role === 'border') {
     adaptedHex = isChromatic(sourceColor)
-      ? mixColors(adaptAccentColor(sourceHex, preview.background, appearance), preview.background, 0.36)
-      : mixColors(preview.foreground, preview.background, appearance === 'dark' ? 0.68 : 0.78);
+      ? mixAppearanceColors(
+          adaptAccentColor(sourceHex, preview.background, appearance),
+          preview.background,
+          0.36,
+          appearance,
+        )
+      : mixAppearanceColors(
+          preview.foreground,
+          preview.background,
+          appearance === 'dark' ? 0.68 : 0.78,
+          appearance,
+        );
   } else if (role === 'divider') {
     adaptedHex = adaptDividerColor(sourceColor, sourceHex, preview, appearance);
   } else if (role === 'headline') {
@@ -654,7 +871,12 @@ function adaptColorToken(
   } else {
     const sourceLuminance = colorLuminance(sourceColor);
     adaptedHex = sourceLuminance > 0.22 && sourceLuminance < 0.72
-      ? mixColors(preview.foreground, preview.background, appearance === 'dark' ? 0.18 : 0.2)
+      ? mixAppearanceColors(
+          preview.foreground,
+          preview.background,
+          appearance === 'dark' ? 0.18 : 0.2,
+          appearance,
+        )
       : preview.foreground;
   }
 
@@ -679,11 +901,11 @@ function adaptDividerColor(
     ? adaptAccentColor(sourceHex, preview.background, appearance, 4.5)
     : preview.foreground;
   let backgroundWeight = 0.56;
-  let dividerColor = mixColors(dividerBase, preview.background, backgroundWeight);
+  let dividerColor = mixAppearanceColors(dividerBase, preview.background, backgroundWeight, appearance);
 
   while (colorContrast(preview.background, dividerColor) < 3 && backgroundWeight > 0) {
     backgroundWeight = Math.max(0, backgroundWeight - 0.08);
-    dividerColor = mixColors(dividerBase, preview.background, backgroundWeight);
+    dividerColor = mixAppearanceColors(dividerBase, preview.background, backgroundWeight, appearance);
   }
 
   return dividerColor;
@@ -795,14 +1017,17 @@ function adaptAccentColor(
   appearance: ThemeAppearance,
   minimumContrast = 3,
 ): string {
-  const target = appearance === 'dark' ? '#FFFFFF' : '#000000';
-  const initialWeight = appearance === 'dark' ? 0.22 : 0.08;
-  let adaptedColor = mixColors(color, target, initialWeight);
+  if (appearance === 'dark') {
+    return mapAccentToDarkSurface({ color, background, minimumContrast });
+  }
+
+  const initialWeight = 0.08;
+  let adaptedColor = mixColors(color, '#000000', initialWeight);
   let targetWeight = initialWeight;
 
   while (colorContrast(background, adaptedColor) < minimumContrast && targetWeight < 0.92) {
     targetWeight += 0.08;
-    adaptedColor = mixColors(color, target, targetWeight);
+    adaptedColor = mixColors(color, '#000000', targetWeight);
   }
 
   return adaptedColor;
@@ -814,7 +1039,12 @@ function adaptSecondaryColor(
   appearance: ThemeAppearance,
 ): string {
   const adaptedAccent = adaptAccentColor(color, background, appearance);
-  return mixColors(adaptedAccent, background, appearance === 'dark' ? 0.28 : 0.2);
+  return mixAppearanceColors(
+    adaptedAccent,
+    background,
+    appearance === 'dark' ? 0.28 : 0.2,
+    appearance,
+  );
 }
 
 function normalizedPaletteColor(
@@ -885,6 +1115,17 @@ function mixColors(firstColor: string, secondColor: string, secondWeight: number
     green: first.green + (second.green - first.green) * secondWeight,
     blue: first.blue + (second.blue - first.blue) * secondWeight,
   });
+}
+
+function mixAppearanceColors(
+  firstColor: string,
+  secondColor: string,
+  secondWeight: number,
+  appearance: ThemeAppearance,
+): string {
+  return appearance === 'dark'
+    ? mixPerceptualColors({ firstColor, secondColor, secondWeight })
+    : mixColors(firstColor, secondColor, secondWeight);
 }
 
 function colorContrast(firstColor: string, secondColor: string): number {

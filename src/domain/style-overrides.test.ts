@@ -150,6 +150,33 @@ describe('applyThemeStyleOverrides', () => {
     expect(nextTheme.config?.components?.section_divider.enabled).toBe(false);
     expect(themeWithDivider.config.components.section_divider.enabled).toBe(true);
   });
+
+  it('routes replacement-heading overrides to the decoration rendering rule', () => {
+    const themeWithDecoratedHeading: ThemeDefinition = structuredClone(theme);
+    if (!themeWithDecoratedHeading.config) {
+      throw new Error('测试主题缺少配置');
+    }
+    themeWithDecoratedHeading.config.rules = {
+      h1: {
+        decoration: 'hero',
+        replace_original: true,
+      },
+    };
+    const overrides: ThemeStyleOverrides = structuredClone(baseOverrides);
+    overrides.text.h1 = {
+      color: '#123456',
+      'font-size': '32px',
+      'margin-bottom': '24px',
+    };
+
+    const nextTheme = applyThemeStyleOverrides(
+      themeWithDecoratedHeading,
+      overrides,
+      visibleSectionDivider,
+    );
+
+    expect(nextTheme.config?.rules?.h1?.replacement_text_style).toEqual(overrides.text.h1);
+  });
 });
 
 describe('buildPreviewBoardStyle', () => {

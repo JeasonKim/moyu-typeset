@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import dataset from '../data/themes.json';
 import { renderThemeMarkdown, styleToAttribute } from './theme-renderer';
-import type { ThemeDefinition, ThemePalette } from './theme-types';
+import type { ThemeDefinition, ThemePalette, ThemesDataset } from './theme-types';
 
 const testPalette: ThemePalette = {
   colorFamilies: ['monochrome'],
@@ -63,6 +64,12 @@ const decoratedTheme: ThemeDefinition = {
   },
 };
 
+function markdownListMarkerLabels(html: string): string[] {
+  return [...html.matchAll(/data-markdown-list-marker="true"[^>]*>([^<]*)<\/span>/g)].map(
+    (match) => match[1],
+  );
+}
+
 describe('renderThemeMarkdown', () => {
   it('renders markdown with theme styles and replacement components', () => {
     const result = renderThemeMarkdown({
@@ -77,7 +84,39 @@ describe('renderThemeMarkdown', () => {
     expect(result.html).toContain('<hr style="border-color: #ff5a3d">');
     expect(result.html).toContain('data-inline-strong="true"');
     expect(result.html).toContain('>重点</strong>');
-    expect(result.html).toContain('<ul style="padding-left: 0">');
+    expect(result.html).toContain('<ul');
+  });
+
+  it('renders visible unordered and ordered markers for every theme', () => {
+    const themes = (dataset as unknown as ThemesDataset).themes;
+
+    themes.forEach((theme) => {
+      const result = renderThemeMarkdown({
+        markdown: '- 无序第一项\n- 无序第二项\n\n1. 有序第一项\n2. 有序第二项',
+        theme,
+      });
+
+      expect(markdownListMarkerLabels(result.html), theme.label).toEqual(['•', '•', '1.', '2.']);
+    });
+  });
+
+  it('preserves an ordered list custom starting number', () => {
+    const result = renderThemeMarkdown({
+      markdown: '3. 第三项\n4. 第四项',
+      theme: decoratedTheme,
+    });
+
+    expect(markdownListMarkerLabels(result.html)).toEqual(['3.', '4.']);
+  });
+
+  it('uses task-state markers without adding a second unordered marker', () => {
+    const result = renderThemeMarkdown({
+      markdown: '- [x] 已完成\n- [ ] 待处理',
+      theme: decoratedTheme,
+    });
+
+    expect(markdownListMarkerLabels(result.html)).toEqual([]);
+    expect(result.html.match(/data-task-state=/g)).toHaveLength(2);
   });
 
   it('omits a source heading sequence when the theme already renders an automatic number', () => {
@@ -149,7 +188,7 @@ describe('renderThemeMarkdown', () => {
     });
 
     expect(result.html).toContain('>星链已成天花板。</strong>目前');
-    expect(result.html).toContain('>载荷革命</strong>：成本下降</li>');
+    expect(result.html).toContain('>载荷革命</strong>：成本下降');
   });
 
   it('uses semantic emphasis so WeChat keeps the label and following punctuation inline', () => {
@@ -173,6 +212,7 @@ describe('renderThemeMarkdown', () => {
     expect(result.html).not.toContain('<li');
     expect(result.html).toContain('data-wechat-list="unordered"');
     expect(result.html).toContain('data-wechat-list-item="true"');
+    expect(result.html).toContain('data-wechat-list-marker="true">•</span>');
     expect(result.html).toContain('>全部模板</strong>：浏览完整的排版样式');
   });
 

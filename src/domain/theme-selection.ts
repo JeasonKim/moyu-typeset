@@ -1,4 +1,4 @@
-import type { ThemeDefinition } from './theme-types';
+import type { ThemeAppearance, ThemeDefinition } from './theme-types';
 
 export interface ThemeSelectionInput {
   themes: ThemeDefinition[];
@@ -11,6 +11,22 @@ export interface ThemeSelectionResult {
   selectedThemeId: string;
   source: 'requested' | 'stored' | 'first';
 }
+
+export interface ThemeCardSelectionInput {
+  requestedThemeId: string;
+  selectedThemeId: string;
+  pendingThemeId: string | null;
+  currentAppearance: ThemeAppearance;
+}
+
+export interface ThemeCardActivation {
+  themeId: string;
+  appearance: ThemeAppearance;
+}
+
+export type ThemeCardSelection =
+  | { kind: 'ignore' }
+  | { kind: 'activate'; activation: ThemeCardActivation };
 
 export function selectPreviewTheme(input: ThemeSelectionInput): ThemeSelectionResult {
   const { themes, requestedThemeId, storedThemeId } = input;
@@ -43,6 +59,23 @@ export function selectPreviewTheme(input: ThemeSelectionInput): ThemeSelectionRe
   }
 
   return selectedFrom(themes[0], 'first');
+}
+
+export function resolveThemeCardSelection(input: ThemeCardSelectionInput): ThemeCardSelection {
+  if (
+    input.requestedThemeId === input.pendingThemeId ||
+    input.requestedThemeId === input.selectedThemeId
+  ) {
+    return { kind: 'ignore' };
+  }
+
+  return {
+    kind: 'activate',
+    activation: {
+      themeId: input.requestedThemeId,
+      appearance: input.currentAppearance,
+    },
+  };
 }
 
 function matchTheme(themes: ThemeDefinition[], themeId?: string | null): ThemeDefinition | undefined {
